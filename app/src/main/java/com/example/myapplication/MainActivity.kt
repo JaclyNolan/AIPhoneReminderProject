@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
             var openAIEnabled by remember { mutableStateOf(prefs.isOpenAIAnalysisEnabled()) }
             var openAIApiKey by remember { mutableStateOf(prefs.getOpenAIApiKey() ?: "") }
             var openAIBatchSize by remember { mutableStateOf(prefs.getOpenAIBatchSize()) }
+            var autoAdvance by remember { mutableStateOf(prefs.getAutoAdvanceDialogues()) }
 
             val notificationPermissionLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.RequestPermission(),
@@ -53,16 +54,26 @@ class MainActivity : ComponentActivity() {
                 }
             )
 
+            // Launcher used to open AdvancedActivity and refresh autoAdvance after it closes (in case user changed the setting)
+            val advancedLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+                if (result.resultCode == RESULT_OK) {
+                    // Reload the preference from storage so changes are immediately reflected
+                    autoAdvance = prefs.getAutoAdvanceDialogues()
+                }
+            }
+
             val screenCaptureLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.StartActivityForResult()
             ) { result ->
                 if (result.resultCode == RESULT_OK) {
                     result.data?.let {
-                        val serviceIntent = Intent(this, ScreenshotService::class.java).apply {
-                            putExtra(ScreenshotService.EXTRA_RESULT_CODE, result.resultCode)
-                            putExtra(ScreenshotService.EXTRA_DATA, it)
+                        val serviceIntent = Intent(this, MainForegroundService::class.java).apply {
+                            putExtra(ServiceActions.EXTRA_RESULT_CODE, result.resultCode)
+                            putExtra(ServiceActions.EXTRA_DATA, it)
                         }
-                        Log.d(TAG, "Launching ScreenshotService with projection data")
+                        Log.d(TAG, "Launching MainForegroundService with projection data")
                         ContextCompat.startForegroundService(this, serviceIntent)
                         isScreenshotting = true
                     }
@@ -134,7 +145,7 @@ class MainActivity : ComponentActivity() {
                     onStartScreenshots = {},
                     onStopScreenshots = {
                         Log.d(TAG, "Stopping screenshot service")
-                        val serviceIntent = Intent(this, ScreenshotService::class.java)
+                        val serviceIntent = Intent(this, MainForegroundService::class.java)
                         stopService(serviceIntent)
                         isScreenshotting = false
                     },
@@ -148,14 +159,15 @@ class MainActivity : ComponentActivity() {
                     },
                     onOpenAdvanced = {
                         val intent = Intent(this, AdvancedActivity::class.java)
-                        startActivity(intent)
+                        advancedLauncher.launch(intent)
                     },
                     // pass theme state and toggle callback so the UI can control theme
                     currentDarkTheme = isDarkTheme,
                     onToggleTheme = {
                         isDarkTheme = !isDarkTheme
                         prefs.setDarkTheme(isDarkTheme)
-                    }
+                    },
+                    autoAdvance = autoAdvance
                  )
              }
          }

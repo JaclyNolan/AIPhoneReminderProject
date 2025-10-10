@@ -32,6 +32,7 @@ fun AdvancedScreen(
     openAIBatchSize: Int,
     isScreenshotting: Boolean,
     saveScreenshots: Boolean,
+    autoAdvance: Boolean,
     onIntervalChange: (Long) -> Unit,
     onScaleChange: (Float) -> Unit,
     onQualityChange: (Int) -> Unit,
@@ -39,6 +40,7 @@ fun AdvancedScreen(
     onOpenAIApiKeyChange: (String) -> Unit,
     onOpenAIBatchSizeChange: (Int) -> Unit,
     onSaveScreenshotsChange: (Boolean) -> Unit,
+    onAutoAdvanceChange: (Boolean) -> Unit,
     onClose: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize().systemBarsPadding().imePadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -50,6 +52,12 @@ fun AdvancedScreen(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Checkbox(checked = saveScreenshots, onCheckedChange = onSaveScreenshotsChange)
             Text("Save screenshots to device", style = MaterialTheme.typography.bodyMedium)
+        }
+
+        // Auto-advance dialogues toggle
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Checkbox(checked = autoAdvance, onCheckedChange = onAutoAdvanceChange)
+            Text("Auto-advance dialogues when typing finishes", style = MaterialTheme.typography.bodyMedium)
         }
 
         Text("Screenshot interval: ${interval / 1000} s", style = MaterialTheme.typography.bodyMedium)

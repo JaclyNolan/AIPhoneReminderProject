@@ -360,7 +360,7 @@ Return JSON ONLY in this exact format:
                             // Build a concise suggestion that includes the summary and the new memory entry so the chat model
                             // can craft a response in character and reference the memory when appropriate.
                             val suggestionSb = StringBuilder()
-                            suggestionSb.append("Developer suggests responding to the user. Screen summary: ")
+                            suggestionSb.append("Phone screen analyzer suggests responding to the user. Screen summary: ")
                             suggestionSb.append(summary.ifEmpty { "(no summary)" })
                             if (!newMemoryEntry.isNullOrEmpty()) {
                                 suggestionSb.append(". New memory entry: ")

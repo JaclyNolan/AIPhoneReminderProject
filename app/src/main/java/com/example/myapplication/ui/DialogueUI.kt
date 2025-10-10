@@ -3,12 +3,15 @@ package com.example.myapplication.ui
 import android.graphics.BitmapFactory
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.media.SoundPool
+import android.content.res.AssetFileDescriptor
+import android.util.Log
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-jimport androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -22,7 +25,6 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.TextUnit
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
@@ -31,15 +33,22 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.unit.Constraints
 import com.example.myapplication.R
 import kotlinx.coroutines.delay
+import java.io.File
 
-// DialogueUI: displays a portrait (on top) and an outlined dialogue box below it, with a Typewriter effect.
-// Now accepts List<DialogueEntry> where DialogueEntry contains (speaker, text, emotion).
+private val DIALOGUE_BOX_SHAPE = RoundedCornerShape(8.dp)
+private val DIALOGUE_BOX_PADDING = 8.dp
+private val DIALOGUE_BOX_BORDER_WIDTH = 1.dp
+private const val DIALOGUE_LOG_TAG = "DialogueUI"
+private val INITIAL_DIALOGUES_INJECTED = java.util.concurrent.atomic.AtomicBoolean(false)
 
 @Composable
 fun DialogueUI(
-    parts: List<DialogueEntry> = emptyList(),
+    initialDialogues: List<DialogueEntry> = emptyList(),
     modifier: Modifier = Modifier,
     portraitSize: Dp = 56.dp,
     lineHeight: TextUnit = 20.sp,
@@ -51,54 +60,76 @@ fun DialogueUI(
     advanceSignal: Int = 0,
     allowTouchAdvance: Boolean = true,
     touchSkipsWhenTyping: Boolean = true,
+    autoAdvance: Boolean = true,
     onFinishedAll: (() -> Unit)? = null
 ) {
-    // NOTE: Local 'parts' support removed; always operate in queue mode.
-
-    // Observe the global queue and use its head as the active entry
     val queueSnapshot by DialogueQueue.state.collectAsState()
     val current = queueSnapshot.firstOrNull()
 
-    // Tone generator for blip sound (shared across entries)
+    var lastShownEntry by remember { mutableStateOf<DialogueEntry?>(null) }
+    if (current != null) lastShownEntry = current
+    val displayed = current ?: lastShownEntry
+
+    LaunchedEffect(initialDialogues) {
+        if (!INITIAL_DIALOGUES_INJECTED.get() && initialDialogues.isNotEmpty() && DialogueQueue.snapshot()
+                .isEmpty()
+        ) {
+            DialogueQueue.enqueue(initialDialogues)
+            INITIAL_DIALOGUES_INJECTED.set(true)
+        }
+    }
+
     val tone = remember { if (playSound) ToneGenerator(AudioManager.STREAM_MUSIC, 50) else null }
     DisposableEffect(tone) { onDispose { tone?.release() } }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        // Height for 3 lines
         val density = LocalDensity.current
         val lineHeightDp = with(density) { lineHeight.toDp() }
         val boxHeight = lineHeightDp * 3
+        val fullBoxHeight = boxHeight + DIALOGUE_BOX_PADDING * 2
 
         if (current != null) {
-            // Measure and split long text: if it exceeds 3 lines, replace the head with two entries (firstPart, remaining)
             var alreadySplit by remember(current) { mutableStateOf(false) }
-            Text(
-                text = current.text,
-                style = TextStyle(lineHeight = lineHeight, color = Color.Transparent),
-                maxLines = Int.MAX_VALUE,
-                onTextLayout = { layout ->
-                    if (!alreadySplit && layout.lineCount > 3) {
-                        val endIndex = layout.getLineEnd(2, visibleEnd = true)
-                        val cutIndex = findCutIndex(current.text, endIndex)
-                        val firstPart = current.text.substring(0, cutIndex).trimEnd()
-                        val remaining = current.text.substring(cutIndex).trimStart()
+            SubcomposeLayout(modifier = Modifier.fillMaxWidth()) { constraints ->
+                val paddingPx = with(density) { DIALOGUE_BOX_PADDING.roundToPx() }
+                val borderPx = with(density) { DIALOGUE_BOX_BORDER_WIDTH.roundToPx() }
+                val availableWidth =
+                    (constraints.maxWidth - paddingPx * 2 - borderPx * 2).coerceAtLeast(0)
 
-                        // Replace the head of the queue with firstPart followed by remaining
-                        DialogueQueue.replaceHeadWith(listOf(current.copy(text = firstPart), current.copy(text = remaining)))
+                val measurables = subcompose("textMeasure") {
+                    Text(
+                        text = current.text,
+                        style = MaterialTheme.typography.bodyLarge.copy(lineHeight = lineHeight),
+                        maxLines = Int.MAX_VALUE,
+                        modifier = Modifier.alpha(0f),
+                        onTextLayout = { layout ->
+                            if (!alreadySplit && layout.lineCount > 3) {
+                                val endIndex = layout.getLineEnd(2, visibleEnd = true)
+                                val cutIndex = findCutIndex(current.text, endIndex)
+                                val firstPart = current.text.substring(0, cutIndex).trimEnd()
+                                val remaining = current.text.substring(cutIndex).trimStart()
+                                DialogueQueue.replaceHeadWith(
+                                    listOf(
+                                        current.copy(text = firstPart),
+                                        current.copy(text = remaining)
+                                    )
+                                )
+                                alreadySplit = true
+                            }
+                        }
+                    )
+                }
 
-                        alreadySplit = true
-                    }
-                },
-                modifier = Modifier.height(0.dp)
-            )
+                measurables.first().measure(Constraints(maxWidth = availableWidth, minWidth = 0))
+                layout(width = 0, height = 0) {}
+            }
+        }
 
-            // show the (possibly split) head of the queue; after replaceHeadWith the queue will update and recomposition will show the updated head
-            val active = queueSnapshot.firstOrNull()
-
+        if (displayed != null) {
             TypewriterDialogueBlock(
-                entry = active ?: current,
+                entry = displayed,
                 portraitSize = portraitSize,
-                boxHeight = boxHeight,
+                fullBoxHeight = fullBoxHeight,
                 lineHeight = lineHeight,
                 charDelayMs = charDelayMs,
                 commaPauseMs = commaPauseMs,
@@ -106,43 +137,77 @@ fun DialogueUI(
                 playSound = playSound,
                 tone = tone,
                 requireAdvance = requireAdvance,
+                autoAdvance = autoAdvance,
                 advanceSignal = advanceSignal,
-                lastAdvanceSignalRef = { /* no local lastAdvanceSignal tracking when using queue-only mode */ },
+                lastAdvanceSignalRef = { /* no-op */ },
                 onRequestAdvance = {
-                    // Dequeue the shown entry and invoke finished callback if queue becomes empty
                     DialogueQueue.dequeue()
                     if (DialogueQueue.state.value.isEmpty()) onFinishedAll?.invoke()
                 },
                 allowTouchAdvance = allowTouchAdvance,
-                touchSkipsWhenTyping = touchSkipsWhenTyping
+                touchSkipsWhenTyping = touchSkipsWhenTyping,
+                dialogueShape = DIALOGUE_BOX_SHAPE,
+                dialoguePadding = DIALOGUE_BOX_PADDING
             )
         }
     }
-
     // Observe external advanceSignal but actual handling is inside TypewriterDialogueBlock (kept for compatibility)
 }
 
 @Composable
-private fun StaticDialogueBlock(entry: DialogueEntry, portraitSize: Dp, boxHeight: Dp, lineHeight: TextUnit) {
+private fun StaticDialogueBlock(
+    entry: DialogueEntry,
+    portraitSize: Dp,
+    boxHeight: Dp,
+    lineHeight: TextUnit
+) {
     val ctx = LocalContext.current
-    Column(modifier = Modifier.fillMaxWidth().padding(start = 4.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp)
+    ) {
         // show speaker tag
-        if (!entry.speaker.isNullOrBlank()) {
-            Text(text = entry.speaker, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface)
+        if (entry.speaker.isNotBlank()) {
+            Text(
+                text = entry.speaker,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
 
-        val candidateNames = emotionCandidateNames(entry.emotion ?: "normal")
+        val candidateNames = relativePathCandidateNames(entry.relativePath)
+
         val resId = candidateNames.map { name ->
             val resourceName = name.replace('&', '_').replace(Regex("[^a-z0-9_]+"), "_")
             ctx.resources.getIdentifier(resourceName, "drawable", ctx.packageName)
         }.firstOrNull { it != 0 } ?: R.drawable.ic_launcher_foreground
         val painter: Painter = painterResource(id = resId)
-        Image(painter = painter, contentDescription = "portrait", modifier = Modifier.size(portraitSize))
+        Image(
+            painter = painter,
+            contentDescription = "portrait",
+            modifier = Modifier.size(portraitSize)
+        )
         Spacer(modifier = Modifier.height(6.dp))
-        Box(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f), RoundedCornerShape(8.dp)).height(boxHeight).padding(8.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.98f), shape = DIALOGUE_BOX_SHAPE)
+                .border(
+                    DIALOGUE_BOX_BORDER_WIDTH,
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                    DIALOGUE_BOX_SHAPE
+                )
+                .height(boxHeight)
+                .padding(DIALOGUE_BOX_PADDING)
+        ) {
             val dark = isSystemInDarkTheme()
             val textColor = if (dark) Color.White else MaterialTheme.colorScheme.onSurface
-            Text(text = entry.text, style = MaterialTheme.typography.bodyLarge.copy(lineHeight = lineHeight), color = textColor)
+            Text(
+                text = entry.text,
+                style = MaterialTheme.typography.bodyLarge.copy(lineHeight = lineHeight),
+                color = textColor
+            )
         }
     }
 }
@@ -151,7 +216,7 @@ private fun StaticDialogueBlock(entry: DialogueEntry, portraitSize: Dp, boxHeigh
 private fun TypewriterDialogueBlock(
     entry: DialogueEntry,
     portraitSize: Dp,
-    boxHeight: Dp,
+    fullBoxHeight: Dp,
     lineHeight: TextUnit,
     charDelayMs: Long,
     commaPauseMs: Long,
@@ -163,21 +228,40 @@ private fun TypewriterDialogueBlock(
     lastAdvanceSignalRef: (Int) -> Unit,
     onRequestAdvance: () -> Unit,
     allowTouchAdvance: Boolean,
-    touchSkipsWhenTyping: Boolean
+    touchSkipsWhenTyping: Boolean,
+    dialogueShape: RoundedCornerShape,
+    dialoguePadding: Dp,
+    autoAdvance: Boolean
 ) {
+    val autoAdvanceState by rememberUpdatedState(newValue = autoAdvance)
+
     val ctx = LocalContext.current
-    val candidateNames = emotionCandidateNames(entry.emotion ?: "normal")
+    // If the speaker is Ralsei and playSound is enabled, use the WAV asset as SFX
+    val ralseiSfx = remember(entry.speaker, playSound) {
+        if (playSound && entry.speaker.equals("Ralsei", ignoreCase = true)) {
+            SfxPlayer(ctx, "sound_effect/snd_txtral.wav")
+        } else null
+    }
+    DisposableEffect(ralseiSfx) { onDispose { ralseiSfx?.release() } }
+
+    val candidateNames = relativePathCandidateNames(entry.relativePath)
     val resId = candidateNames.map { name ->
         val resourceName = name.replace('&', '_').replace(Regex("[^a-z0-9_]+"), "_")
         ctx.resources.getIdentifier(resourceName, "drawable", ctx.packageName)
     }.firstOrNull { it != 0 } ?: 0
 
-    val bitmapPainterOrNull = remember(candidateNames) {
+    val bitmapPainterOrNull = remember(entry.relativePath) {
         val assetPaths = mutableListOf<String>()
-        val emotionRaw = entry.emotion ?: "normal"
-        assetPaths.add("portrait/ralsei/$emotionRaw.png")
-        assetPaths.add("portrait/$emotionRaw.png")
-        assetPaths.add("ralsei_$emotionRaw.png")
+        val rel = entry.relativePath
+        // Prefer explicit relativePath if provided and appears to be under portrait/ralsei
+        if (!rel.isNullOrBlank()) {
+            if (rel.startsWith("portrait/ralsei/")) assetPaths.add(rel) else assetPaths.add("portrait/ralsei/${File(rel).name}")
+        }
+        // Next, try canonical portrait/ralsei/<base>.png
+        val base = try { File(rel ?: DEFAULT_RALSEI_PATH).nameWithoutExtension } catch (_: Exception) { "normal" }
+        assetPaths.add("portrait/ralsei/$base.png")
+        // Last resort: default
+        assetPaths.add(DEFAULT_RALSEI_PATH)
 
         var foundBmp: android.graphics.Bitmap? = null
         var i = 0
@@ -195,17 +279,18 @@ private fun TypewriterDialogueBlock(
         foundBmp?.asImageBitmap()?.let { BitmapPainter(it) }
     }
 
-    val painter: Painter = if (resId != 0) painterResource(id = resId) else bitmapPainterOrNull ?: painterResource(id = R.drawable.ic_launcher_foreground)
+    val painter: Painter = if (resId != 0) painterResource(id = resId) else bitmapPainterOrNull
+        ?: painterResource(id = R.drawable.ic_launcher_foreground)
 
-    // typing state
     var typedCount by remember { mutableStateOf(0) }
     var isTyping by remember { mutableStateOf(true) }
     var localAdvanceSignal by remember { mutableStateOf(advanceSignal) }
 
-    // portrait pop animation when typing starts
-    val pop by animateFloatAsState(targetValue = if (isTyping) 1.03f else 1f, animationSpec = tween(durationMillis = 180))
+    val pop by animateFloatAsState(
+        targetValue = if (isTyping) 1.03f else 1f,
+        animationSpec = tween(durationMillis = 180)
+    )
 
-    // Clicking behavior
     val clickableModifier = if (allowTouchAdvance) Modifier.clickable {
         if (isTyping && touchSkipsWhenTyping) {
             typedCount = entry.text.length
@@ -215,27 +300,53 @@ private fun TypewriterDialogueBlock(
         }
     } else Modifier
 
-    Column(modifier = Modifier.fillMaxWidth().padding(start = 4.dp)) {
-        // speaker
-        if (!entry.speaker.isNullOrBlank()) {
-            Text(text = entry.speaker, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (entry.speaker.isNotBlank()) {
+            Text(
+                text = entry.speaker,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
 
-        Image(painter = painter, contentDescription = "portrait", modifier = Modifier.size(portraitSize).scale(pop))
+        Image(
+            painter = painter, contentDescription = "portrait", modifier = Modifier
+                .size(portraitSize)
+                .scale(pop)
+        )
         Spacer(modifier = Modifier.height(6.dp))
-        Box(modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f), RoundedCornerShape(8.dp)).height(boxHeight + 8.dp * 2).padding(8.dp).then(clickableModifier)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.98f), shape = dialogueShape)
+                .border(
+                    DIALOGUE_BOX_BORDER_WIDTH,
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                    dialogueShape
+                )
+                .height(fullBoxHeight)
+                .padding(dialoguePadding)
+                .then(clickableModifier)
+        ) {
             val dark = isSystemInDarkTheme()
             val textColor = if (dark) Color.White else MaterialTheme.colorScheme.onSurface
             val visible = remember(typedCount, entry.text) { entry.text.take(typedCount) }
-            Text(text = visible, style = MaterialTheme.typography.bodyLarge.copy(lineHeight = lineHeight), color = textColor)
+            Text(
+                text = visible,
+                style = MaterialTheme.typography.bodyLarge.copy(lineHeight = lineHeight),
+                color = textColor
+            )
 
             if (!isTyping) {
-                Box(modifier = Modifier.align(Alignment.BottomEnd).padding(end = 4.dp, bottom = 2.dp)) { BlinkingAdvanceIndicator() }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 4.dp, bottom = 2.dp)
+                ) { BlinkingAdvanceIndicator() }
             }
         }
     }
 
-    // typing coroutine
     LaunchedEffect(entry.text) {
         typedCount = 0
         isTyping = true
@@ -248,10 +359,16 @@ private fun TypewriterDialogueBlock(
             val ch = entry.text[i]
             typedCount = i + 1
             if (playSound && !ch.isWhitespace()) {
-                try { tone?.startTone(ToneGenerator.TONE_PROP_BEEP, 40) } catch (_: Exception) {}
+                try {
+                    // Play Ralsei asset if available, fallback to ToneGenerator otherwise
+                    if (ralseiSfx != null) ralseiSfx.play() else tone?.startTone(ToneGenerator.TONE_PROP_BEEP, 40)
+                } catch (_: Exception) {
+                }
             }
 
-            val pause = when (ch) { ',' -> commaPauseMs; '.', '!', '?', '\u2014', ';' -> punctuationPauseMs; else -> charDelayMs }
+            val pause = when (ch) {
+                ',' -> commaPauseMs; '.', '!', '?', '\u2014', ';' -> punctuationPauseMs; else -> charDelayMs
+            }
 
             var waited = 0L
             val step = 20L
@@ -260,7 +377,9 @@ private fun TypewriterDialogueBlock(
                 waited += step
                 if (advanceSignal != localAdvanceSignal) {
                     localAdvanceSignal = advanceSignal
-                    if (requireAdvance) { typedCount = len; i = len; break }
+                    if (requireAdvance) {
+                        typedCount = len; i = len; break
+                    }
                 }
             }
 
@@ -268,57 +387,80 @@ private fun TypewriterDialogueBlock(
         }
 
         isTyping = false
-        if (!requireAdvance) { delay(400); onRequestAdvance() }
+        if (!requireAdvance && autoAdvanceState) {
+            delay(400); onRequestAdvance()
+        }
     }
 
-    // external advance handling
     LaunchedEffect(advanceSignal) {
         if (advanceSignal == localAdvanceSignal) return@LaunchedEffect
         localAdvanceSignal = advanceSignal
-        if (isTyping) { typedCount = entry.text.length; isTyping = false } else onRequestAdvance()
+        if (isTyping) {
+            typedCount = entry.text.length; isTyping = false
+        } else onRequestAdvance()
     }
 }
 
 @Composable
 private fun BlinkingAdvanceIndicator() {
-    Box(modifier = Modifier.size(10.dp).background(Color.Transparent)) {
-        // simple static indicator (kept minimal to avoid unused animation variable)
-        Box(modifier = Modifier.size(8.dp).background(Color.White, shape = CircleShape))
+    Box(
+        modifier = Modifier
+            .size(10.dp)
+            .background(Color.Transparent)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .background(Color.White, shape = CircleShape)
+        )
     }
 }
 
-// helper to find the best cut index (prefer sentence end before maxIndex; else word boundary; else maxIndex)
 private fun findCutIndex(text: String, maxIndex: Int): Int {
     val capped = maxIndex.coerceIn(0, text.length)
     if (capped <= 0) return 0
-    // look for sentence-ending punctuation before or at capped
     val punctChars = listOf('.', '!', '?', ';')
     for (i in capped - 1 downTo 0) {
         val ch = text[i]
-        if (ch in punctChars) return i + 1 // include punctuation
+        if (ch in punctChars) return i + 1
     }
-    // no sentence end found: look for last whitespace before capped
     for (i in capped - 1 downTo 0) {
         if (text[i].isWhitespace()) return i
     }
-    // fallback
     return capped
 }
 
-// Pure helper: generate candidate drawable names from emotion string (no Compose APIs)
-private fun emotionCandidateNames(emotion: String): List<String> {
-    val sanitized = emotion
-    val base = sanitized.ifBlank { "normal" }
-    val candidates = mutableListOf<String>()
-    if (base.contains("ralsei")) {
-        candidates.add(base)
-    } else {
-        candidates.add("ralsei_$base")
-        candidates.add("portrait_ralsei_$base")
-        candidates.add("portrait_$base")
-        candidates.add(base)
+// Simple SoundPool-backed player that loads an asset file and plays it
+private class SfxPlayer(private val ctx: android.content.Context, private val assetPath: String) {
+    private val soundPool: SoundPool = SoundPool.Builder().setMaxStreams(4).build()
+    private var soundId: Int = 0
+    private var loaded = false
+
+    init {
+        try {
+            val afd: AssetFileDescriptor = ctx.assets.openFd(assetPath)
+            soundId = soundPool.load(afd, 1)
+            soundPool.setOnLoadCompleteListener { _, id, status ->
+                if (status == 0 && id == soundId) loaded = true
+            }
+        } catch (t: Throwable) {
+            Log.w("DialogueUI", "Failed to load sfx asset: $assetPath", t)
+        }
     }
-    candidates.add("ralsei")
-    candidates.add("portrait_ralsei")
-    return candidates
+
+    fun play() {
+        try {
+            if (loaded && soundId != 0) {
+                soundPool.play(soundId, 1f, 1f, 1, 0, 1f)
+            }
+        } catch (t: Throwable) {
+            Log.w("DialogueUI", "Failed to play sfx", t)
+        }
+    }
+
+    fun release() {
+        try {
+            soundPool.release()
+        } catch (_: Exception) {}
+    }
 }

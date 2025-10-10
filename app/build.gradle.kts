@@ -43,6 +43,10 @@ dependencies {
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    // Explicit lifecycle runtime artifact (ensures ViewTreeLifecycleOwner et al are available)
+    implementation("androidx.lifecycle:lifecycle-runtime:2.6.1")
+    // Provide view-tree lifecycle/viewmodel/savedstate utilities required for ComposeView in overlays
+    implementation("androidx.lifecycle:lifecycle-viewmodel-savedstate:2.6.1")
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)

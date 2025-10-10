@@ -2,6 +2,8 @@
   <dictionary name="project">
     <words>
       <w>hmmss</w>
+      <w>punct</w>
+      <w>ralsei</w>
     </words>
   </dictionary>
 </component>

@@ -22,8 +22,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+import com.example.myapplication.ui.DialogueEntry
+import com.example.myapplication.ui.DEFAULT_RALSEI_PATH
 
 @Suppress("UNUSED_PARAMETER")
 @Composable
@@ -52,7 +55,8 @@ fun ScreenshotApp(
     onOpenAdvanced: () -> Unit = {},
     // New params to allow toggling the app theme from this screen
     currentDarkTheme: Boolean = true,
-    onToggleTheme: () -> Unit = {}
+    onToggleTheme: () -> Unit = {},
+    autoAdvance: Boolean = true
 ) {
     // Overall layout: black background, centered small Card for title/tip, buttons moved below the card,
     // and the dialogue box anchored at the bottom to be the main eye attraction.
@@ -162,24 +166,27 @@ fun ScreenshotApp(
         }
 
         // Dialogue box at the bottom — central visual element
-        // Use the existing TypewriterDialogue composable. Provide a small sample dialogue.
-        val sampleLines = listOf(
-            DialogueLine(speaker = "System", text = "Screenshot tool active. Tap text to skip or advance. Screenshot tool active. Tap text to skip or advance."),
-            DialogueLine(speaker = "Guide", text = "This dialogue sits at the bottom so it's the main eye attraction."),
-            DialogueLine(text = "Adjust settings above to change behavior.")
+        // Use the existing DialogueUI composable directly. Provide a small sample dialogue using DialogueEntry.
+        val sampleEntries = listOf(
+            DialogueEntry(speaker = "System", text = "Screenshot tool active. Tap text to skip or advance. Screenshot tool active. Tap text to skip or advance."),
+            DialogueEntry(speaker = "Guide", text = "This dialogue sits at the bottom so it's the main eye attraction."),
+            DialogueEntry(speaker = "Welcome!", text = "Adjust settings above to change behavior.", relativePath = "/portrait/ralsei/excited.png"),
         )
 
-        TypewriterDialogue(
+        DialogueUI(
+            initialDialogues = sampleEntries,
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter),
-            lines = sampleLines,
+            portraitSize = 56.dp,
+            lineHeight = 20.sp,
             charDelayMs = 36L,
             commaPauseMs = 120L,
             punctuationPauseMs = 320L,
             playSound = false, // keep demo silent in this app area
             allowTouchAdvance = true,
             touchSkipsWhenTyping = true,
+            autoAdvance = autoAdvance,
             onFinishedAll = { /* no-op for demo */ }
         )
     }

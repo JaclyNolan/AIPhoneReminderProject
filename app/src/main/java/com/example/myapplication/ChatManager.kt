@@ -17,6 +17,7 @@ import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
 import com.example.myapplication.ui.DialogueEntry
 import com.example.myapplication.ui.DialogueQueue
+import com.example.myapplication.ui.emotionToRelativePath
 
 /**
  * ChatManager handles a chat-oriented model that can access memories and chat history.
@@ -429,7 +430,8 @@ NEVER combine two emotions unless it is one of the above strings exactly.
             val text: String? = if (item.isNull("text")) null else item.optString("text")
             val emotion: String? = if (item.isNull("emotion")) null else item.optString("emotion")
             val speaker: String = item.optString("speaker", "Ralsei")
-            if (!text.isNullOrBlank()) out.add(DialogueEntry(speaker = speaker, text = text.trim(), emotion = emotion))
+            val relativePath = emotionToRelativePath(emotion)
+            if (!text.isNullOrBlank()) out.add(DialogueEntry(speaker = speaker, text = text.trim(), relativePath = relativePath))
         }
 
         try {
@@ -474,7 +476,8 @@ NEVER combine two emotions unless it is one of the above strings exactly.
                         val text: String? = if (item.isNull("text")) null else item.optString("text")
                         val emotion: String? = if (item.isNull("emotion")) null else item.optString("emotion")
                         val speaker = item.optString("speaker", "Ralsei")
-                        if (!text.isNullOrBlank()) out.add(DialogueEntry(speaker = speaker, text = text.trim(), emotion = emotion))
+                        val relativePath = emotionToRelativePath(emotion)
+                        if (!text.isNullOrBlank()) out.add(DialogueEntry(speaker = speaker, text = text.trim(), relativePath = relativePath))
                     }
                     is String -> if (item.isNotBlank()) out.add(DialogueEntry(text = item.trim()))
                 }

@@ -4,8 +4,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
+        android:name=".MyApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -35,14 +37,10 @@
             android:name=".AdvancedActivity"
             android:exported="false"
             android:theme="@style/Theme.MyApplication" />
-        <activity
-            android:name=".ui.DialogueActivity"
-            android:exported="false"
-            android:theme="@style/Theme.MyApplication" />
         <service
-            android:name=".ScreenshotService"
+            android:name=".MainForegroundService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="mediaProjection|dataSync" />
     </application>
 
 </manifest>

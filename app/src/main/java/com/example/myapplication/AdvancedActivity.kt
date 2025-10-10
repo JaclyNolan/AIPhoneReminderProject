@@ -26,6 +26,7 @@ class AdvancedActivity : ComponentActivity() {
                 var openAIBatchSize by rememberSaveable { mutableStateOf(prefs.getOpenAIBatchSize()) }
                 var isScreenshotting by rememberSaveable { mutableStateOf(prefs.isScreenshotting()) }
                 var saveScreenshots by rememberSaveable { mutableStateOf(prefs.getSaveScreenshots()) }
+                var autoAdvance by rememberSaveable { mutableStateOf(prefs.getAutoAdvanceDialogues()) }
 
                 AdvancedScreen(
                     interval = interval,
@@ -36,6 +37,7 @@ class AdvancedActivity : ComponentActivity() {
                     openAIBatchSize = openAIBatchSize,
                     isScreenshotting = isScreenshotting,
                     saveScreenshots = saveScreenshots,
+                    autoAdvance = autoAdvance,
                     onIntervalChange = { newInterval ->
                         interval = newInterval
                         prefs.setInterval(newInterval)
@@ -64,7 +66,15 @@ class AdvancedActivity : ComponentActivity() {
                         saveScreenshots = v
                         prefs.setSaveScreenshots(v)
                     },
-                    onClose = { finish() }
+                    onAutoAdvanceChange = { v ->
+                        autoAdvance = v
+                        prefs.setAutoAdvanceDialogues(v)
+                    },
+                    onClose = {
+                        // Indicate that preferences may have changed so caller can refresh (e.g., autoAdvance)
+                        setResult(RESULT_OK)
+                        finish()
+                    }
                 )
             }
         }

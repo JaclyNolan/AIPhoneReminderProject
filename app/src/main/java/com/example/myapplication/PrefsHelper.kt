@@ -58,4 +58,8 @@ class PrefsHelper(context: Context) {
     // Theme preference: whether the app should use dark theme
     fun isDarkTheme(): Boolean = prefs.getBoolean("dark_theme", true)
     fun setDarkTheme(value: Boolean) = prefs.edit { putBoolean("dark_theme", value) }
+
+    // New preference: auto-advance dialogues when the typewriter finishes. Default true for backward compatibility.
+    fun getAutoAdvanceDialogues(): Boolean = prefs.getBoolean("auto_advance_dialogues", true)
+    fun setAutoAdvanceDialogues(value: Boolean) = prefs.edit { putBoolean("auto_advance_dialogues", value) }
 }
