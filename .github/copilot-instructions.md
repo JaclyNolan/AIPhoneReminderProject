@@ -67,10 +67,7 @@ This Android app creates an AI companion (Ralsei from Deltarune) that observes u
 ```
 
 **Testing:**
-```bash
-./gradlew testDebugUnitTest          # Unit tests
-./gradlew connectedDebugAndroidTest  # Instrumented tests
-```
+ 
 
 **Permissions Required:**
 - `FOREGROUND_SERVICE_MEDIA_PROJECTION`: Screenshot capture
