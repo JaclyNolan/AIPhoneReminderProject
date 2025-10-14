@@ -37,6 +37,10 @@
             android:name=".AdvancedActivity"
             android:exported="false"
             android:theme="@style/Theme.MyApplication" />
+        <activity
+            android:name=".ui.ResponseLogActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MyApplication" />
         <service
             android:name=".MainForegroundService"
             android:exported="false"

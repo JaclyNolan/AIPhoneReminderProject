@@ -1,27 +1,14 @@
 package com.example.myapplication.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -53,141 +40,330 @@ fun ScreenshotApp(
     onOpenMemoryLogs: () -> Unit = {},
     onOpenChat: () -> Unit = {},
     onOpenAdvanced: () -> Unit = {},
+    onOpenResponseLog: () -> Unit = {},
     // New params to allow toggling the app theme from this screen
     currentDarkTheme: Boolean = true,
     onToggleTheme: () -> Unit = {},
     autoAdvance: Boolean = true
 ) {
-    // Overall layout: black background, centered small Card for title/tip, buttons moved below the card,
-    // and the dialogue box anchored at the bottom to be the main eye attraction.
     Box(
         modifier = Modifier
             .fillMaxSize()
             .systemBarsPadding()
             .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+                .padding(bottom = 220.dp), // Space for dialogue at bottom
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Header Card
+            HeaderCard()
+
+            // Main Control Section
+            MainControlCard(
+                isProjecting = isProjecting,
+                isScreenshotting = isScreenshotting,
+                notifyPref = notifyPref,
+                onStartProjection = onStartProjection,
+                onStartScreenshots = onStartScreenshots,
+                onStopScreenshots = onStopScreenshots,
+                onNotifyChange = onNotifyChange
+            )
+
+            // Navigation Buttons Section
+            NavigationSection(
+                onOpenMemoryLogs = onOpenMemoryLogs,
+                onOpenChat = onOpenChat,
+                onOpenResponseLog = onOpenResponseLog,
+                onOpenAdvanced = onOpenAdvanced,
+                currentDarkTheme = currentDarkTheme,
+                onToggleTheme = onToggleTheme
+            )
+        }
+
+        // Dialogue box at the bottom
+        DialogueSection(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter),
+            autoAdvance = autoAdvance
+        )
+    }
+}
+
+@Composable
+private fun HeaderCard() {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 600.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .align(Alignment.TopCenter),
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Minimal Card (only title and small tip) so the main focus is the dialogue at the bottom
-            Card(
-                modifier = Modifier
-                    .widthIn(max = 800.dp)
-                    .padding(8.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Column(
+            Text(
+                text = "Screen Capture AI",
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                textAlign = TextAlign.Center
+            )
+
+            Divider(
+                modifier = Modifier.padding(vertical = 4.dp),
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f)
+            )
+
+            Text(
+                text = "Your AI companion watches and learns from your screen activity",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+private fun MainControlCard(
+    isProjecting: Boolean,
+    isScreenshotting: Boolean,
+    notifyPref: Boolean,
+    onStartProjection: () -> Unit,
+    onStartScreenshots: () -> Unit,
+    onStopScreenshots: () -> Unit,
+    onNotifyChange: (Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 600.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Status indicator
+            StatusChip(isProjecting = isProjecting, isScreenshotting = isScreenshotting)
+
+            // Main action button
+            if (!isProjecting) {
+                Button(
+                    onClick = onStartProjection,
                     modifier = Modifier
-                        .padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
                 ) {
                     Text(
-                        text = "Screen Capture",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurface
+                        text = "Request Screen Capture Permission",
+                        style = MaterialTheme.typography.titleMedium
                     )
-
+                }
+            } else {
+                Button(
+                    onClick = if (!isScreenshotting) onStartScreenshots else onStopScreenshots,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (!isScreenshotting)
+                            MaterialTheme.colorScheme.primary
+                        else
+                            MaterialTheme.colorScheme.error
+                    )
+                ) {
                     Text(
-                        text = "Tip: Allow screen capture when prompted. The service runs in foreground while capturing.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = if (!isScreenshotting) "Start Screenshots" else "Stop Screenshots",
+                        style = MaterialTheme.typography.titleMedium
                     )
                 }
             }
 
-            // Buttons moved out of the Card: provide a separate area for controls
-            Column(
+            // Notification toggle
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = onOpenAdvanced) {
-                        Text("Open Advanced")
-                    }
-                    Spacer(modifier = Modifier.size(8.dp))
-                    // Toggle theme button
-                    Button(onClick = onToggleTheme) {
-                        Text(if (currentDarkTheme) "Switch to Light" else "Switch to Dark")
-                    }
-                }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Checkbox(
-                        onCheckedChange = { onNotifyChange(it) },
-                        checked = notifyPref
+                Checkbox(
+                    checked = notifyPref,
+                    onCheckedChange = onNotifyChange,
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = MaterialTheme.colorScheme.primary
                     )
-                    Text("Show notification on screenshot", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
-                }
+                )
+                Text(
+                    text = "Show notification on each screenshot",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (isProjecting) {
-                        Button(
-                            onClick = if (!isScreenshotting) onStartScreenshots else onStopScreenshots,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (!isScreenshotting) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.error
-                            )
-                        ) {
-                            Text(if (!isScreenshotting) "Start Screenshots" else "Stop Screenshots")
-                        }
-                    }
-                    if (!isProjecting) {
-                        Button(
-                            onClick = onStartProjection,
-                            modifier = Modifier.padding(start = 8.dp)
-                        ) {
-                            Text("Request Screen Capture Permission")
-                        }
-                    }
-                }
+@Composable
+private fun StatusChip(isProjecting: Boolean, isScreenshotting: Boolean) {
+    val (statusText, statusColor) = when {
+        isScreenshotting -> "Active" to MaterialTheme.colorScheme.tertiary
+        isProjecting -> "Ready" to MaterialTheme.colorScheme.secondary
+        else -> "Inactive" to MaterialTheme.colorScheme.outline
+    }
 
-                Row {
-                    Button(onClick = onOpenMemoryLogs) {
-                        Text("Open Memory Log")
-                    }
-                    Spacer(modifier = Modifier.size(8.dp))
-                    Button(onClick = onOpenChat) {
-                        Text("Open Chat")
-                    }
+    Surface(
+        color = statusColor.copy(alpha = 0.15f),
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            text = "Status: $statusText",
+            style = MaterialTheme.typography.labelLarge,
+            color = statusColor,
+            modifier = Modifier.padding(12.dp),
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun NavigationSection(
+    onOpenMemoryLogs: () -> Unit,
+    onOpenChat: () -> Unit,
+    onOpenResponseLog: () -> Unit,
+    onOpenAdvanced: () -> Unit,
+    currentDarkTheme: Boolean,
+    onToggleTheme: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 600.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Navigation",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // AI Tools Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onOpenMemoryLogs,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Memory Log", fontSize = 12.sp, textAlign = TextAlign.Center)
+                }
+                OutlinedButton(
+                    onClick = onOpenChat,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Chat", fontSize = 12.sp, textAlign = TextAlign.Center)
+                }
+                OutlinedButton(
+                    onClick = onOpenResponseLog,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Response Log", fontSize = 12.sp, textAlign = TextAlign.Center)
+                }
+            }
+
+            // Settings Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onOpenAdvanced,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Advanced", fontSize = 12.sp, textAlign = TextAlign.Center)
+                }
+                OutlinedButton(
+                    onClick = onToggleTheme,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = if (currentDarkTheme) "Light Mode" else "Dark Mode",
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
         }
-
-        // Dialogue box at the bottom — central visual element
-        // Use the existing DialogueUI composable directly. Provide a small sample dialogue using DialogueEntry.
-        val sampleEntries = listOf(
-            DialogueEntry(speaker = "System", text = "Screenshot tool active. Tap text to skip or advance. Screenshot tool active. Tap text to skip or advance."),
-            DialogueEntry(speaker = "Guide", text = "This dialogue sits at the bottom so it's the main eye attraction."),
-            DialogueEntry(speaker = "Welcome!", text = "Adjust settings above to change behavior.", relativePath = "/portrait/ralsei/excited.png"),
-        )
-
-        DialogueUI(
-            initialDialogues = sampleEntries,
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter),
-            portraitSize = 56.dp,
-            lineHeight = 20.sp,
-            charDelayMs = 36L,
-            commaPauseMs = 120L,
-            punctuationPauseMs = 320L,
-            playSound = false, // keep demo silent in this app area
-            allowTouchAdvance = true,
-            touchSkipsWhenTyping = true,
-            autoAdvance = autoAdvance,
-            onFinishedAll = { /* no-op for demo */ }
-        )
     }
+}
+
+@Composable
+private fun DialogueSection(
+    modifier: Modifier = Modifier,
+    autoAdvance: Boolean
+) {
+    val sampleEntries = listOf(
+        DialogueEntry(
+            speaker = "Ralsei",
+            text = "Welcome! I'm here to observe and learn from your activities.",
+            relativePath = "/portrait/ralsei/excited.png"
+        ),
+        DialogueEntry(
+            speaker = "Ralsei",
+            text = "Tap the text to skip or advance through messages.",
+            relativePath = "/portrait/ralsei/smile.png"
+        ),
+        DialogueEntry(
+            speaker = "System",
+            text = "Configure settings above to customize behavior and permissions."
+        )
+    )
+
+    DialogueUI(
+        initialDialogues = sampleEntries,
+        modifier = modifier,
+        portraitSize = 64.dp,
+        lineHeight = 20.sp,
+        charDelayMs = 36L,
+        commaPauseMs = 120L,
+        punctuationPauseMs = 320L,
+        playSound = false,
+        allowTouchAdvance = true,
+        touchSkipsWhenTyping = true,
+        autoAdvance = autoAdvance,
+        onFinishedAll = { }
+    )
 }

@@ -161,6 +161,10 @@ class MainActivity : ComponentActivity() {
                         val intent = Intent(this, AdvancedActivity::class.java)
                         advancedLauncher.launch(intent)
                     },
+                    onOpenResponseLog = {
+                        val intent = Intent(this, com.example.myapplication.ui.ResponseLogActivity::class.java)
+                        startActivity(intent)
+                    },
                     // pass theme state and toggle callback so the UI can control theme
                     currentDarkTheme = isDarkTheme,
                     onToggleTheme = {

@@ -285,6 +285,7 @@ private fun TypewriterDialogueBlock(
     var typedCount by remember { mutableStateOf(0) }
     var isTyping by remember { mutableStateOf(true) }
     var localAdvanceSignal by remember { mutableStateOf(advanceSignal) }
+    var shouldCancelTyping by remember { mutableStateOf(false) }
 
     val pop by animateFloatAsState(
         targetValue = if (isTyping) 1.03f else 1f,
@@ -295,6 +296,7 @@ private fun TypewriterDialogueBlock(
         if (isTyping && touchSkipsWhenTyping) {
             typedCount = entry.text.length
             isTyping = false
+            shouldCancelTyping = true
         } else if (!isTyping) {
             onRequestAdvance()
         }
@@ -325,8 +327,8 @@ private fun TypewriterDialogueBlock(
                     dialogueShape
                 )
                 .height(fullBoxHeight)
-                .padding(dialoguePadding)
                 .then(clickableModifier)
+                .padding(dialoguePadding)
         ) {
             val dark = isSystemInDarkTheme()
             val textColor = if (dark) Color.White else MaterialTheme.colorScheme.onSurface
@@ -350,12 +352,13 @@ private fun TypewriterDialogueBlock(
     LaunchedEffect(entry.text) {
         typedCount = 0
         isTyping = true
+        shouldCancelTyping = false
         localAdvanceSignal = advanceSignal
         lastAdvanceSignalRef(localAdvanceSignal)
 
         var i = 0
         val len = entry.text.length
-        while (i < len) {
+        while (i < len && !shouldCancelTyping) {
             val ch = entry.text[i]
             typedCount = i + 1
             if (playSound && !ch.isWhitespace()) {
@@ -372,7 +375,7 @@ private fun TypewriterDialogueBlock(
 
             var waited = 0L
             val step = 20L
-            while (waited < pause) {
+            while (waited < pause && !shouldCancelTyping) {
                 delay(step)
                 waited += step
                 if (advanceSignal != localAdvanceSignal) {
@@ -387,7 +390,7 @@ private fun TypewriterDialogueBlock(
         }
 
         isTyping = false
-        if (!requireAdvance && autoAdvanceState) {
+        if (!requireAdvance && autoAdvanceState && !shouldCancelTyping) {
             delay(400); onRequestAdvance()
         }
     }
