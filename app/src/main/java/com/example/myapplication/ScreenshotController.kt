@@ -101,6 +101,9 @@ class ScreenshotController(private val context: Context, private val notifier: N
             return
         }
 
+        // Log that we're about to take a screenshot
+        Log.i(TAG, "📸 Taking screenshot...")
+
         // Acquire the latest image from the existing ImageReader on the main thread
         mainHandler.postDelayed({
             val image = currentImageReader?.acquireLatestImage()
@@ -122,7 +125,7 @@ class ScreenshotController(private val context: Context, private val notifier: N
                     saveBitmap(bitmap)
                     bitmap.recycle()
                     if (notify) notifier.showScreenshotNotification()
-                    Log.d(TAG, "Screenshot saved successfully (persistent display)")
+                    Log.i(TAG, "✅ Screenshot captured successfully (${persistentWidth}x${persistentHeight})")
                 } else {
                     Log.e(TAG, "Failed to acquire image from persistent ImageReader")
                 }
@@ -294,14 +297,14 @@ class ScreenshotController(private val context: Context, private val notifier: N
                 Log.d(TAG, "Skipping saving screenshot to device (user preference)")
             }
 
-            // Enqueue bytes directly for OpenAI analysis if enabled (preferred over passing a URI)
+            // Enqueue bytes directly for analysis if enabled
             try {
                 if (prefs.isOpenAIAnalysisEnabled()) {
-                    // Use the enqueueImageBytes API to avoid later file reads and permission issues
-                    OpenAIAnalyzer.enqueueImageBytes(context, imageBytes)
+                    // Use AnalyzerAgent for structured batch processing with 3-frame windows
+                    AnalyzerAgent.enqueueImageBytes(context, imageBytes)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to enqueue image bytes for OpenAI analysis", e)
+                Log.e(TAG, "Failed to enqueue image bytes for analysis", e)
             }
 
         } catch (e: Exception) {

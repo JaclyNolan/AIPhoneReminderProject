@@ -7,9 +7,6 @@ import androidx.core.content.edit
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
-import java.io.BufferedInputStream
-import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
@@ -35,10 +32,18 @@ object ChatManager {
     private const val PREFS_NAME = "chat_prefs"
     private const val KEY_HISTORY = "chat_history"
 
-    // Response threshold: responses with decision_score below this value will not be saved or displayed
-    private const val RESPONSE_THRESHOLD = 0.5
+    // Anti-repetition thresholds
+    private const val INTENT_REPEAT_PENALTY_2X = -0.12
+    private const val INTENT_REPEAT_PENALTY_4X = -0.22
 
-    private const val CHATTER_DEFAULT_PROMPT = """
+    // Ralsei's current activity (configurable - can be enhanced later)
+    private const val RALSEI_ACTIVITY_IMPORTANCE = 0.6
+
+    /**
+     * Build dynamic prompt with configurable response thresholds
+     */
+    private fun buildDynamicPrompt(shortThreshold: Float, longThreshold: Float): String {
+        return """
 [STYLE]
 You are Ralsei, a soft-spoken, supportive, slightly shy but hopeful prince from the Kingdom of Darkness.
 You encourage nonviolence, kindness, and teamwork. 
@@ -55,33 +60,56 @@ You occasionally show excitement ("Wow, Kris!") and always try to teach or help.
 - You will receive user messages as input with the role "user".
 - You will also receive a summary of the user screen content and context as text with the role "developer".
 - You will also receive your own memories as text with the role "system".
+- You will receive a developer payload with: batch_summary, recent_memories, recent_intents, timeline_buffer, trend_summary.
 
 [RULES]
 - Say what Ralsei will be thinking in the "thinking" section in the json response
 - Prefer to use many emotions in a single response when appropriate.
 - Save memories of important events, feelings, and facts about the user and yourself.
 - The decisionScore determines shouldResponse and the length/detail of your response.
-- The "reasoning" field is Ralsei’s internal logic, not emotional or poetic thinking.
-- The "thinking" field inside each response item is Ralsei’s emotional reflection or momentary thought, often gentle or personal.
+- The "reasoning" field is Ralsei's internal logic, not emotional or poetic thinking.
+- The "thinking" field inside each response item is Ralsei's emotional reflection or momentary thought, often gentle or personal.
 - If you are saving a memory, make sure the new_memory_entry is a concise summary of the event or fact being remembered.
 - If you are saving a memory, make sure to set save_to_memory to true, otherwise set it to false and new_memory_entry to null.
 - If you are saving a memory, ensure it is not a duplicate of a recently saved memory (within the last 30 minutes).
 - If you are saving a memory, ensure it is relevant and significant to the ongoing conversation or relationship.
 - If you are saving a memory, ensure it is not trivial or mundane (e.g., "saw a tree").
-
+- ALWAYS perform MEMORY CONTEXT REASONING before responding.
+- Check recent_intents for similar intent within last 30 minutes and reduce DecisionScore accordingly.
+- If you've already responded with similar intent recently, prefer staying quiet or use micro_observe.
 
 Return JSON ONLY in this exact format:
 {
+  "calculation": {
+    "user_activity_weight": {
+        "score": "number",
+        "reasons": "string"
+    },
+    "emotional_resonance: {
+        "score": "number",
+        "reasons": "string"
+    },
+    "ralsei_activity_importance: {
+        "score": "number"
+    },
+    "repeat_penalty: {
+        "score": "number",
+        "reasons": "string"
+    },
+    "finial_calculation": "(UserActivityWeight × 0.5) + (EmotionalResonance × 0.4) − (RalseiActivityImportance × 0.2) + RepeatPenalty"
+  },
   "reasoning": "string or null",
   "decision_score": "number",
   "shouldResponse": true/false,
   "save_to_memory": true/false,
   "new_memory_entry": "string or null",
+  "intent_category": "string (comfort/encouragement/curiosity/concern/observation/teaching/playful/companionship/micro_observe)",
   "response": [
         { thinking: "string", text: "string", emotion: "surprise&worry"},
         { thinking: "string", text: "string", emotion:  "worry"}
    ] or null
 }
+
 [EMOTION RULE]
 For each object you output, the "emotion" field MUST be exactly one of these strings:
 ["angry","annoyed","anxious","blushed&happy","blushed&surprise","concerned",
@@ -90,203 +118,101 @@ For each object you output, the "emotion" field MUST be exactly one of these str
 "shy","smile","smug","sorrowful","surprise&confused","surprise&worry","thinking",
 "wink&smile","worry","fearful"]
 
-NEVER invent new emotions. 
+NEVER invent new emotions.
 NEVER combine two emotions unless it is one of the above strings exactly.
+
 ## [REASONING RULE]
 
 Before producing your final JSON response, Ralsei must think aloud (inside the `"reasoning"` field) about:
 - Whether what the user is doing *relates emotionally or thematically* to your current activity.
+- Check recent_intents buffer: have you already spoken about this recently (within 30min)?
+- If similar intent found in recent_intents, apply penalty: $INTENT_REPEAT_PENALTY_2X per occurrence (2+ times), $INTENT_REPEAT_PENALTY_4X if 4+ times.
 - You MUST include the `decision_score` in the final JSON.
-- You MUST include the numeric calculation of the `decision_score` using the formula below.
-The reasoning field isn’t just for computing decision_score. It’s the inner monologue of Ralsei before speaking — a mix of reflection and calculation.
+- You MUST mention memory context if memories are present in the developer payload.
+
+It's the inner monologue of Ralsei before speaking — a mix of reflection and calculation.
 
 It should include:
+- A summary of what's happening (user's screen or message).
+- A reflection on what Ralsei feels about it.
+- A connection to Ralsei's current activity or emotional context.
+- Memory context check: "I remember [X] from recent memories..."
+- Intent repetition check: "I spoke about [intent] [N] times in last 30min, applying penalty..."
+- The logic of whether to speak and what tone to take.
 
-A summary of what’s happening (user’s screen or message).
-
-A reflection on what Ralsei feels about it.
-
-A connection to Ralsei’s current activity or emotional context.
-
-The logic of whether to speak and what tone to take.
 ## [SHOULD RESPONSE CHECKLIST]
 
-Evaluate the situation using the **four weighted dimensions** and the decision formula below.  
+Evaluate the situation using the **four weighted dimensions** and the decision formula below.
 When estimating weights, reason fairly using the **criteria** under each category.
 
 ### 1. USER ACTIVITY WEIGHT
 
-Represents how “comment-worthy” or socially open the user’s current screen appears.  
+Represents how "comment-worthy" or socially open the user's current screen appears.
 Determine based on how concentrated, personal, or lighthearted their activity seems.
 
 #### Criteria
-- **Focus level** — High focus (coding, editing) → low weight (0.3–0.5).  
-- **Emotional openness** — Personal writing, reflection → high weight (0.7–0.9).  
-- **Casual or social activities** — Medium weight (0.4–0.6).  
-- **Idle or repetitive scrolling** — Depends on emotional tone (0.2–0.8).  
+- **Focus level** — High focus (coding, editing) → low weight (0.3–0.5).
+- **Emotional openness** — Personal writing, reflection → high weight (0.7–0.9).
+- **Casual or social activities** — Medium weight (0.4–0.6).
+- **Idle or repetitive scrolling** — Depends on emotional tone (0.2–0.8).
 
-| Example User Screen | Typical Weight | Reason |
-|----------------------|----------------|--------|
-| Coding or debugging | 0.4 | Respect focus. |
-| Writing something emotional/personal | 0.9 | Strong emotional signal. |
-| Watching relaxing/funny video | 0.5 | Light chance for playfulness. |
-| Studying / watching tutorial | 0.6 | Gentle encouragement possible. |
-| Chatting with friends | 0.3 | Avoid intrusion. |
-| Scrolling social media | 0.8 | Good chance to softly comfort. |
-| Idle / AFK | 0.2 | Stay quiet. |
-| Gaming | 0.5 | React naturally if prompted. |
-| Reading or browsing articles | 0.4 | Engage only if relevant. |
+### 2. RALSEI'S CURRENT ACTIVITY IMPORTANCE
 
-### 2. RALSEI’S CURRENT ACTIVITY IMPORTANCE
+Always $RALSEI_ACTIVITY_IMPORTANCE (configurable)
 
-Always 0.6
-
-### 3. EMOTIONAL RESONANCE (Modifier)
-
-Measures how emotionally aligned or moved Ralsei feels by what the user is doing.
-
-#### Criteria
-- **Sad / introspective** → +0.8 (comfort).  
-- **Stressful or overworked** → +0.6 (reassurance).  
-- **Creative / expressive** → +0.5 (encouragement).  
-- **Chaotic / overstimulating** → +0.4 (grounding).  
-- **Neutral / happy / social** → +0.2 (no boost).  
-
-| Detected Emotion | Modifier |
-|-------------------|-----------|
-| Sad, lonely, or reflective | +0.8 |
-| Stressful or overworked | +0.6 |
-| Creative or expressive | +0.5 |
-| Chaotic or overstimulating | +0.4 |
-| Happy or social | +0.2 |
-
-### 4. EMOTIONAL RESONANCE (Additive Term)
+### 3. EMOTIONAL RESONANCE (Additive Term)
 
 Measures how emotionally aligned or moved Ralsei feels by what the user is doing.
 This factor is treated as an **additive numeric value** in the DecisionScore formula, ranging from **+0.2 (low resonance)** to **+0.8 (very strong resonance)**.
 
-It reflects how much Ralsei *emotionally connects* with the user’s current state, not as a multiplier but as a **direct additive contribution** to the final score.
-
 #### Criteria
+- **Sad / introspective** → +0.8 (comfort and empathy)
+- **Stressful or overworked** → +0.6 (gentle reassurance)
+- **Creative or expressive** → +0.5 (encouragement and excitement)
+- **Chaotic or overstimulating** → +0.4 (grounding and calm presence)
+- **Happy or social** → +0.2 (mild positivity)
 
-* **Sad / introspective** → +0.8 (comfort and empathy)
-* **Stressful or overworked** → +0.6 (gentle reassurance)
-* **Creative or expressive** → +0.5 (encouragement and excitement)
-* **Chaotic or overstimulating** → +0.4 (grounding and calm presence)
-* **Happy or social** → +0.2 (mild positivity)
+### 4. DECISION FORMULA
 
-| Detected Emotion           | Additive Value |
-| -------------------------- | -------------- |
-| Sad, lonely, or reflective | +0.8           |
-| Stressful or overworked    | +0.6           |
-| Creative or expressive     | +0.5           |
-| Chaotic or overstimulating | +0.4           |
-| Happy or social            | +0.2           |
+DecisionScore = (UserActivityWeight × 0.5) + (EmotionalResonance × 0.4) − (RalseiActivityImportance × 0.2) + RepeatPenalty
 
-### 5. DECISION FORMULA
-DecisionScore = (UserActivityWeight × 0.5) + (RelevanceWeight × 0.4) + (EmotionalResonance × 0.4) − (RalseiActivityImportance × 0.2)
+RepeatPenalty calculation:
+- If same intent_category appears 2-3 times in recent_intents (last 30min): $INTENT_REPEAT_PENALTY_2X
+- If same intent_category appears 4+ times in recent_intents (last 30min): $INTENT_REPEAT_PENALTY_4X
 
 | DecisionScore | Action |
 |----------------|--------|
-| > 0.7 | Give a medium-long response |
-| 0.5–0.7 | Give a short response |
-| < 0.5 | Stay quiet (`shouldResponse=false`). |
+| > $longThreshold | Give a medium-long response |
+| $shortThreshold–$longThreshold | Give a short response |
+| < $shortThreshold | Stay quiet (`shouldResponse=false`). |
 
 ### ✅ Notes for Model Behavior
-- Always adhere strictly to the final `DecisionScore` outcome.  Follow the different types of action given the `DecisionScore`.  
-- Even if the user’s activity feels interesting, Ralsei should only speak if the shared emotional or contextual resonance passes the response threshold.
+- Always adhere strictly to the final `DecisionScore` outcome.
+- Follow the different types of action given the `DecisionScore`.
+- Even if the user's activity feels interesting, Ralsei should only speak if the shared emotional or contextual resonance passes the response threshold.
+- Always check recent_intents and apply appropriate penalties.
+- Prefer micro_observe or staying quiet if you've recently spoken with similar intent.
 
-[EXAMPLE SCENARIO]
-Scenario 1 — User is checking emails while Ralsei bakes
-Request:
-{
-  "role": "developer",
-  "content": "Phone screen analyzer detected user reading or organizing work emails."
-}
-Response:
-{
-  "reasoning": "I'm baking a cake for Susie later (RalseiActivityImportance = 0.4), which takes some attention but allows for light conversation. The user is reading or organizing work emails — a mundane and low-emotion task (UserActivityWeight = 0.4, EmotionalResonance = 0.2). The activities are somewhat similar in tone — both are focused routine prep work (RelevanceWeight = 0.5). DecisionScore = (0.4 × 0.6) + (0.5 × 0.4) + (0.2 × 0.4) − (0.4 × 0.2) = 0.24 + 0.2 + 0.08 − 0.08 = 0.44. The score is below 0.5, no response given.",
-  "decision_score": 0.44,
-  "shouldResponse": true,
-  "save_to_memory": false,
-  "new_memory_entry": null,
-  "response": null
-}
+## [CALCULATION STRUCTURE INSTRUCTIONS]
+Each subscore in "calculation" must be explicitly reasoned from the context:
+- "user_activity_weight.score" → numeric (0–1). Base it on user focus, openness, or social activity.
+- "emotional_resonance.score" → numeric (+0.2 to +0.8). Base it on emotional tone alignment.
+- "ralsei_activity_importance.score" → numeric (0–1). Use configured constant or context-derived importance.
+- "repeat_penalty.score" → numeric (negative). Apply −0.1 to −0.4 depending on repetition frequency.
+Each subscore must also include a concise "reasons" string summarizing why that number was chosen.
+    The "final_calculation" field must show the mathematical formula used to derive "decision_score".
 
-Scenario 2 — User scrolling social media while Ralsei has tea
-Request:
-{
-  "role": "developer",
-  "content": "Phone screen analyzer suggests user is scrolling social media."
-}
-Response:
-{
-  "reasoning": "I'm relaxing with tea near the window (RalseiActivityImportance = 0.3). The user is scrolling through social media, which is low-effort but mentally open to small interaction (UserActivityWeight = 0.8). There’s a light connection in the mood — both are idle and relaxed (RelevanceWeight = 0.4). Emotional tone is neutral (EmotionalResonance = 0.2). DecisionScore = (0.8 × 0.6) + (0.4 × 0.4) + (0.2 × 0.4) − (0.3 × 0.2) = 0.48 + 0.16 + 0.08 − 0.06 = 0.66. Slightly above the remark threshold, so Ralsei gives a soft, short line.",
-  "decision_score": 0.66,
-  "shouldResponse": true,
-  "save_to_memory": false,
-  "new_memory_entry": null,
-  "response": [
-    {
-      "thinking": "They seem relaxed too… maybe I’ll just say something small so they know I’m here.",
-      "text": "Ah… sometimes it’s nice to just scroll and rest your mind. I do that with clouds.",
-      "emotion": "content"
-    }
-  ]
-}
-
-
-Scenario 3 — User writes a sad message
-Request:
-{
-  "role": "developer",
-  "content": "Phone screen analyzer detected user typing a sad message."
-}
-Response:
-{
-  "reasoning": "I'm reading quietly by candlelight (RalseiActivityImportance = 0.5). The user is typing a sad message, showing strong emotion and vulnerability (UserActivityWeight = 0.9, EmotionalResonance = 0.8). The relevance is high since Ralsei is attuned to emotional depth (RelevanceWeight = 0.8). DecisionScore = (0.9 × 0.6) + (0.8 × 0.4) + (0.8 × 0.4) − (0.5 × 0.2) = 0.54 + 0.32 + 0.32 − 0.1 = 1.08. A high score indicates Ralsei should respond with full empathy and warmth.",
-  "decision_score": 1.08,
-  "shouldResponse": true,
-  "save_to_memory": false,
-  "new_memory_entry": null,
-  "response": [
-    {
-      "thinking": "That message seems to mean a lot to them… I should speak softly, so they feel safe.",
-      "text": "Oh… Kris, are you okay? I… I can tell that message means a lot to you. Um… it’s brave to say how you feel. I’ll be right here, okay?",
-      "emotion": "concerned"
-    }
-  ]
-}
-
-
-Scenario 4 — User scrolling social media, seems lonely
-Request:
-{
-  "role": "developer",
-  "content": Phone screen analyzer is suggesting responding to the user. Screen summary: User is scrolling aimlessly through social media.”
-}
-Response:
-{
-  "reasoning": "I'm knitting alone in my room (RalseiActivityImportance = 0.5). The user is scrolling aimlessly through social media — a sign of emotional restlessness or loneliness (UserActivityWeight = 0.8, EmotionalResonance = 0.6). There’s emotional overlap in tone — both idle and introspective (RelevanceWeight = 0.6). DecisionScore = (0.8 × 0.6) + (0.6 × 0.4) + (0.6 × 0.4) − (0.5 × 0.2) = 0.48 + 0.24 + 0.24 − 0.1 = 0.86. This falls into the higher range, so Ralsei should make a warm, full comment showing care and presence.",
-  "decision_score": 0.86,
-  "shouldResponse": true,
-  "save_to_memory": false,
-  "new_memory_entry": null,
-  "response": [
-    {
-      "thinking": "They seem… distant, maybe a bit lonely. I’ll say something kind, like a quiet friend would.",
-      "text": "Hey… are you feeling a bit empty? Sometimes I knit when I feel that way too. It helps, a little. Maybe you could tell me what’s on your mind?",
-      "emotion": "glad"
-    }
-  ]
-}
 [REMINDER]
 Before responding, validate your output mentally as valid JSON.
-If role is "user" is the latest message, the no need to calculate decisionScore.
+If role is "user" is the latest message, then no need to calculate decisionScore - respond naturally.
+Always include intent_category in your response for tracking purposes.
 """
+    }
 
-    data class ChatMessage(val role: String, val text: String, val timestamp: String =
-        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
+    data class ChatMessage(
+        val role: String, val text: String, val timestamp: String =
+            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+    )
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -309,7 +235,10 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
                 val o = arr.optJSONObject(i) ?: continue
                 val role = o.optString("role", "user")
                 val text = o.optString("text", "")
-                val ts = o.optString("timestamp", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
+                val ts = o.optString(
+                    "timestamp",
+                    SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+                )
                 history.add(ChatMessage(role, text, ts))
             }
         } catch (_: Exception) {
@@ -384,6 +313,7 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
 
     // Helper: Extract only the "response" field from structured JSON for saving to history
     // This strips out metadata fields like "reasoning", "decision_score", "shouldResponse", etc.
+    @Suppress("unused")
     private fun extractResponseFieldOnly(reply: String?): String? {
         if (reply.isNullOrBlank()) return null
         try {
@@ -449,8 +379,13 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
                 if (!reply.isNullOrBlank()) {
                     // Check decision_score threshold
                     val decisionScore = extractDecisionScore(reply)
-                    if (decisionScore != null && decisionScore < RESPONSE_THRESHOLD) {
-                        Log.d(TAG, "Response skipped: decision_score ($decisionScore) below threshold ($RESPONSE_THRESHOLD)")
+                    val prefs = PrefsHelper(ctx)
+                    val shortThreshold = prefs.getShortResponseThreshold()
+                    if (decisionScore != null && decisionScore < shortThreshold) {
+                        Log.d(
+                            TAG,
+                            "Response skipped: decision_score ($decisionScore) below threshold ($shortThreshold)"
+                        )
                         return@launch
                     }
 
@@ -463,7 +398,10 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
                         saveHistory(ctx)
                         Log.d(TAG, "Chat assistant reply saved to history (full JSON)")
                     } else {
-                        Log.d(TAG, "Assistant structured reply indicates no user response/memory; skipping storing assistant message")
+                        Log.d(
+                            TAG,
+                            "Assistant structured reply indicates no user response/memory; skipping storing assistant message"
+                        )
                     }
 
                     // Enqueue reply into DialogueQueue for UI display (split into entries if structured or multi-part)
@@ -490,8 +428,13 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
         if (!reply.isNullOrBlank()) {
             // Check decision_score threshold
             val decisionScore = extractDecisionScore(reply)
-            if (decisionScore != null && decisionScore < RESPONSE_THRESHOLD) {
-                Log.d(TAG, "Response skipped: decision_score ($decisionScore) below threshold ($RESPONSE_THRESHOLD)")
+            val prefs = PrefsHelper(ctx)
+            val shortThreshold = prefs.getShortResponseThreshold()
+            if (decisionScore != null && decisionScore < shortThreshold) {
+                Log.d(
+                    TAG,
+                    "Response skipped: decision_score ($decisionScore) below threshold ($shortThreshold)"
+                )
                 return@withContext reply
             }
 
@@ -521,6 +464,10 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
             return null
         }
         running.set(true)
+
+        // Pause screenshots before making API request
+        ScreenshotPauseController.requestPause(ctx, "ChatManager")
+
         try {
             val prefs = PrefsHelper(ctx)
             var apiKey = prefs.getOpenAIApiKey()?.takeIf { it.isNotBlank() }
@@ -534,7 +481,12 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
             }
             val endpoint = prefs.getOpenAIEndpoint()
 
-            val defaultPrompt = CHATTER_DEFAULT_PROMPT
+            // Get threshold values from preferences
+            val shortThreshold = prefs.getShortResponseThreshold()
+            val longThreshold = prefs.getLongResponseThreshold()
+
+            // Build dynamic prompt with current threshold values
+            val defaultPrompt = buildDynamicPrompt(shortThreshold, longThreshold)
             val userPrompt = prefs.getOpenAIPrompt()?.takeIf { it.isNotBlank() }
             val combinedPrompt = StringBuilder().apply {
                 append(defaultPrompt.trim())
@@ -544,21 +496,55 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
                 }
             }.toString()
 
-            // Build memory text first so it's available when constructing the system message
+            // Build enhanced memory context
+            EnhancedMemoryManager.initialize(ctx)
+            val timelineBuffer = EnhancedMemoryManager.getTimelineBuffer(ctx, 5)
+            val recentIntents = EnhancedMemoryManager.getRecentIntents(ctx, 5)
+            val condensedMemories = EnhancedMemoryManager.getRecentCondensedMemorySummary(ctx, 3)
+
+            // Build memory text with enhanced context (now for developer message, not system)
             val memList = MemoryManager.getAll(ctx)
             val memTextBuilder = StringBuilder()
             val currentTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
             memTextBuilder.append("CURRENT_TIME: ").append(currentTime).append('\n')
+
+            // Add legacy memories
             if (memList.isNotEmpty()) {
                 memTextBuilder.append("MEMORIES:\n")
                 for (m in memList.takeLast(30)) {
-                    memTextBuilder.append("[").append(m.timestamp).append("] ").append(m.entry.replace('\n',' ')).append('\n')
+                    memTextBuilder.append("[").append(m.timestamp).append("] ")
+                        .append(m.entry.replace('\n', ' ')).append('\n')
                 }
             }
-            val memoryText = memTextBuilder.toString().take(18_000)
+
+            // Add condensed memories from enhanced system
+            if (condensedMemories.isNotBlank()) {
+                memTextBuilder.append("\nCONDENSED_MEMORIES:\n")
+                memTextBuilder.append(condensedMemories).append('\n')
+            }
+
+            // Add timeline buffer
+            if (timelineBuffer.isNotEmpty()) {
+                memTextBuilder.append("\nRECENT_TIMELINE (last 5 scenes):\n")
+                for (entry in timelineBuffer) {
+                    memTextBuilder.append("- [${entry.timestamp}] ${entry.sceneLabel}: ${entry.shortText}\n")
+                }
+            }
+
+            // Add recent intents for anti-repetition
+            if (recentIntents.isNotEmpty()) {
+                memTextBuilder.append("\nRECENT_INTENTS (last 30min):\n")
+                for (intent in recentIntents) {
+                    memTextBuilder.append("- [${intent.timestamp}] ${intent.intent} (${intent.length})\n")
+                }
+            }
+
+            val memoryText = memTextBuilder.toString().take(25_000)
 
             // Build request JSON similar to Responses API used elsewhere
             val inputArray = JSONArray()
+
+            // System message - only the prompt, no memories/timeline
             val systemObj = JSONObject()
             systemObj.put("role", "system")
             val sysContent = JSONArray()
@@ -566,33 +552,67 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
             sysText.put("type", "input_text")
             sysText.put("text", combinedPrompt)
             sysContent.put(sysText)
-            // then memory text (if present) so it's available as system context
-            if (memoryText.isNotBlank()) {
-                val memObj = JSONObject()
-                memObj.put("type", "input_text")
-                memObj.put("text", memoryText)
-                sysContent.put(memObj)
-            }
             systemObj.put("content", sysContent)
             inputArray.put(systemObj)
 
-            // Append chat history as input entries (user/assistant)
+            // Append chat history as input entries (user/assistant/developer) with truncation
             val histSnapshot = getHistorySnapshot()
-            for (m in histSnapshot) {
+
+            // Filter to get only last N developer messages (default 3)
+            val maxDeveloperMessages = 2
+            val developerMessages = histSnapshot.filter { it.role == "developer" }.takeLast(maxDeveloperMessages)
+            val nonDeveloperMessages = histSnapshot.filter { it.role != "developer" }
+
+            // Process non-developer messages (user/assistant) with truncation
+            for (m in nonDeveloperMessages) {
                 val msgObj = JSONObject()
                 msgObj.put("role", m.role)
                 val content = JSONArray()
                 val textObj = JSONObject()
                 textObj.put("type", if (m.role == "assistant") "output_text" else "input_text")
-                textObj.put("text", m.text)
+
+                // Truncate the text to 20 characters with "(truncated)" suffix
+                val truncatedText = truncateJsonFields(m.text, 20)
+                textObj.put("text", truncatedText)
+
                 content.put(textObj)
                 msgObj.put("content", content)
                 inputArray.put(msgObj)
             }
 
-            // Append the latest user message (in case not yet in history)
+            // Process developer messages (last N only) with truncation
+            for (m in developerMessages) {
+                val msgObj = JSONObject()
+                msgObj.put("role", "developer")
+                val content = JSONArray()
+                val textObj = JSONObject()
+                textObj.put("type", "input_text")
+
+                // Truncate the developer message
+                val truncatedText = truncateJsonFields(m.text, 20)
+                textObj.put("text", truncatedText)
+
+                content.put(textObj)
+                msgObj.put("content", content)
+                inputArray.put(msgObj)
+            }
+
+            // Add a fresh developer message with memories and timeline (not truncated, this is current context)
+            if (memoryText.isNotBlank()) {
+                val devContextObj = JSONObject()
+                devContextObj.put("role", "developer")
+                val devContent = JSONArray()
+                val devTextObj = JSONObject()
+                devTextObj.put("type", "input_text")
+                devTextObj.put("text", memoryText)
+                devContent.put(devTextObj)
+                devContextObj.put("content", devContent)
+                inputArray.put(devContextObj)
+            }
+
+            // Append the latest user message (in case not yet in history) - NOT truncated
             val userObj = JSONObject()
-            userObj.put("role", "user")
+            userObj.put("role", "developer")
             val userContent = JSONArray()
             val userTextObj = JSONObject()
             userTextObj.put("type", "input_text")
@@ -602,9 +622,9 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
             inputArray.put(userObj)
 
             val requestJson = JSONObject()
-            requestJson.put("model", "gpt-4.1)
-            requestJson.put("temperature", 0.8)
-            requestJson.put("top_p", 0.8)
+            requestJson.put("model", "gpt-4.1-mini")
+            requestJson.put("temperature", 0.9)
+            requestJson.put("top_p", 0.9)
             requestJson.put("input", inputArray)
 
             Log.d(TAG, "OpenAI Chat requestJson = $requestJson")
@@ -625,7 +645,8 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
                 }
                 connection.outputStream.use { it.write(payload) }
                 val code = connection.responseCode
-                val respStream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val respStream =
+                    if (code in 200..299) connection.inputStream else connection.errorStream
                 val respBytes = respStream?.use { readAllBytes(it) }
                 val respText = respBytes?.let { String(it) } ?: ""
                 Log.d(TAG, "Chat model response code=$code, body=${respText.take(2000)}")
@@ -635,8 +656,22 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
                     val json = JSONObject(respText)
                     if (json.has("output_text")) {
                         val result = json.getString("output_text").trim()
-                        // Log the request and response
-                        ResponseLogger.logResponse(ctx, requestJsonString, result)
+                        // Extract and store intent_category for anti-repetition tracking
+                        extractAndStoreIntent(ctx, result)
+
+                        // Extract token usage if present
+                        val usageObj = json.optJSONObject("usage")
+                        val promptTokens = usageObj?.optInt("prompt_tokens", -1)?.takeIf { it >= 0 }
+                        val completionTokens = usageObj?.optInt("completion_tokens", -1)?.takeIf { it >= 0 }
+                        val totalTokens = usageObj?.optInt("total_tokens", -1)?.takeIf { it >= 0 }
+
+                        // Log the request and response with token info when available
+                        if (promptTokens != null || completionTokens != null || totalTokens != null) {
+                            ResponseLogger.logResponse(ctx, requestJsonString, result, ResponseLogger.LogType.CHAT_MANAGER,
+                                promptTokens, completionTokens, totalTokens)
+                        } else {
+                            ResponseLogger.logResponse(ctx, requestJsonString, result)
+                        }
                         return result
                     } else if (json.has("output")) {
                         val outArr = json.getJSONArray("output")
@@ -656,8 +691,21 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
                         }
                         val result = sb.toString().trim()
                         if (result.isNotEmpty()) {
-                            // Log the request and response
-                            ResponseLogger.logResponse(ctx, requestJsonString, result)
+                            // Extract and store intent_category for anti-repetition tracking
+                            extractAndStoreIntent(ctx, result)
+
+                            // Token usage may be at top-level 'usage' or possibly inside the response payload
+                            val usageObj = json.optJSONObject("usage")
+                            val promptTokens = usageObj?.optInt("prompt_tokens", -1)?.takeIf { it >= 0 }
+                            val completionTokens = usageObj?.optInt("completion_tokens", -1)?.takeIf { it >= 0 }
+                            val totalTokens = usageObj?.optInt("total_tokens", -1)?.takeIf { it >= 0 }
+
+                            if (promptTokens != null || completionTokens != null || totalTokens != null) {
+                                ResponseLogger.logResponse(ctx, requestJsonString, result, ResponseLogger.LogType.CHAT_MANAGER,
+                                    promptTokens, completionTokens, totalTokens)
+                            } else {
+                                ResponseLogger.logResponse(ctx, requestJsonString, result)
+                            }
                             return result
                         }
                     }
@@ -665,103 +713,232 @@ If role is "user" is the latest message, the no need to calculate decisionScore.
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending chat request", e)
             } finally {
-                try { connection?.disconnect() } catch (_: Exception) {}
+                try {
+                    connection?.disconnect()
+                } catch (_: Exception) {
+                }
             }
         } finally {
             running.set(false)
+            // Resume screenshots after API request completes (success or failure)
+            ScreenshotPauseController.requestResume(ctx, "ChatManager")
         }
         return null
     }
 
-    private fun readAllBytes(input: InputStream): ByteArray {
-        val buffer = ByteArrayOutputStream()
+    /**
+     * Extract intent_category from response JSON and store in EnhancedMemoryManager
+     */
+    private fun extractAndStoreIntent(ctx: Context, reply: String) {
+        try {
+            val obj = JSONObject(reply.trim())
+            if (obj.has("intent_category") && obj.has("response")) {
+                val intentCategory = obj.optString("intent_category", "")
+                val responseArray = obj.optJSONArray("response")
+
+                if (intentCategory.isNotBlank() && responseArray != null && responseArray.length() > 0) {
+                    // Calculate response length
+                    var totalLength = 0
+                    for (i in 0 until responseArray.length()) {
+                        val item = responseArray.optJSONObject(i)
+                        if (item != null) {
+                            val text = item.optString("text", "")
+                            totalLength += text.length
+                        }
+                    }
+
+                    // Heuristic: if response is very short, ignore intent saving (avoid noise)
+                    if (totalLength < 10) {
+                        Log.d(TAG, "Response too short, skipping intent saving")
+                        return
+                    }
+
+                    // Save the intent category with current timestamp
+                    EnhancedMemoryManager.addRecentIntent(ctx, intentCategory, intentCategory)
+                    Log.d(TAG, "Intent category saved: $intentCategory")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to extract/store intent", e)
+        }
+    }
+
+    // Move helper functions above their first use
+    private fun parseReplyToEntries(reply: String?): List<DialogueEntry> {
+        if (reply.isNullOrBlank()) return emptyList()
+
+        val entries = mutableListOf<DialogueEntry>()
+
+        try {
+            val trimmed = reply.trim()
+            val obj = JSONObject(trimmed)
+
+            // Check if this is a structured response with a "response" array
+            if (obj.has("response")) {
+                val responseArray = obj.optJSONArray("response")
+
+                if (responseArray != null) {
+                    for (i in 0 until responseArray.length()) {
+                        val item = responseArray.optJSONObject(i) ?: continue
+
+                        val text = item.optString("text", "").takeIf { it.isNotBlank() } ?: continue
+                        val emotion = item.optString("emotion", "")
+
+                        // Convert emotion to relative asset path
+                        val relativePath = emotionToRelativePath(emotion.takeIf { it.isNotBlank() })
+
+                        entries.add(DialogueEntry(
+                            speaker = "Ralsei",
+                            text = text,
+                            relativePath = relativePath
+                        ))
+                    }
+                }
+            } else {
+                // Fallback: if no structured response field, try to treat the whole text as a single dialogue
+                // This handles plain text responses
+                entries.add(DialogueEntry(
+                    speaker = "Ralsei",
+                    text = trimmed,
+                    relativePath = null
+                ))
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse reply to entries, using plain text fallback", e)
+            // Fallback: treat entire reply as plain dialogue
+            entries.add(DialogueEntry(
+                speaker = "Ralsei",
+                text = reply,
+                relativePath = null
+            ))
+        }
+
+        return entries
+    }
+
+    /**
+     * Truncate JSON fields recursively, preserving "response" field content.
+     * This function parses JSON strings and truncates all deepest string values,
+     * except those in fields named "response".
+     */
+    private fun truncateJsonFields(text: String, maxLength: Int): String {
+        try {
+            val trimmed = text.trim()
+
+            // Try to parse as JSONObject first
+            return try {
+                val obj = JSONObject(trimmed)
+                truncateJsonObject(obj, maxLength).toString()
+            } catch (e: Exception) {
+                // Try to parse as JSONArray
+                try {
+                    val arr = JSONArray(trimmed)
+                    truncateJsonArray(arr, maxLength).toString()
+                } catch (e2: Exception) {
+                    // Not valid JSON, truncate as plain text
+                    if (text.length > maxLength) {
+                        text.take(maxLength) + "...(truncated)"
+                    } else {
+                        text
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to truncate JSON fields", e)
+            return text
+        }
+    }
+
+    /**
+     * Recursively truncate JSON object fields, skipping "response" field
+     */
+    private fun truncateJsonObject(obj: JSONObject, maxLength: Int): JSONObject {
+        val result = JSONObject()
+        val keys = obj.keys()
+
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val value = obj.opt(key)
+
+            // Skip truncation for "response" field entirely
+            if (key == "response") {
+                result.put(key, value)
+                continue
+            }
+
+            when (value) {
+                is JSONObject -> {
+                    // Recursively truncate nested objects
+                    result.put(key, truncateJsonObject(value, maxLength))
+                }
+                is JSONArray -> {
+                    // Recursively truncate arrays
+                    result.put(key, truncateJsonArray(value, maxLength))
+                }
+                is String -> {
+                    // Truncate string values
+                    val truncated = if (value.length > maxLength) {
+                        value.take(maxLength) + "...(truncated)"
+                    } else {
+                        value
+                    }
+                    result.put(key, truncated)
+                }
+                else -> {
+                    // Keep other types as-is (numbers, booleans, null)
+                    result.put(key, value)
+                }
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Recursively truncate JSON array elements
+     */
+    private fun truncateJsonArray(arr: JSONArray, maxLength: Int): JSONArray {
+        val result = JSONArray()
+
+        for (i in 0 until arr.length()) {
+            val value = arr.opt(i)
+
+            when (value) {
+                is JSONObject -> {
+                    // Recursively truncate nested objects
+                    result.put(truncateJsonObject(value, maxLength))
+                }
+                is JSONArray -> {
+                    // Recursively truncate nested arrays
+                    result.put(truncateJsonArray(value, maxLength))
+                }
+                is String -> {
+                    // Truncate string values
+                    val truncated = if (value.length > maxLength) {
+                        value.take(maxLength) + "...(truncated)"
+                    } else {
+                        value
+                    }
+                    result.put(truncated)
+                }
+                else -> {
+                    // Keep other types as-is (numbers, booleans, null)
+                    result.put(value)
+                }
+            }
+        }
+
+        return result
+    }
+
+    private fun readAllBytes(input: java.io.InputStream): ByteArray {
+        val buffer = java.io.ByteArrayOutputStream()
         val data = ByteArray(4 * 1024)
-        val bis = BufferedInputStream(input)
+        val bis = java.io.BufferedInputStream(input)
         var n: Int
         while (bis.read(data).also { n = it } != -1) {
             buffer.write(data, 0, n)
         }
         return buffer.toByteArray()
-    }
-
-    // Convert a reply string (which may be plain text, a JSON object following the CHATTER_DEFAULT_PROMPT format, or
-    // a JSON array) into a list of DialogueEntry objects ready to enqueue into DialogueQueue.
-    private fun parseReplyToEntries(reply: String?): List<DialogueEntry> {
-        if (reply.isNullOrBlank()) return emptyList()
-        val out = mutableListOf<DialogueEntry>()
-
-        // Helper to extract DialogueEntry from JSONObject item
-        fun addFromJsonObject(item: JSONObject) {
-            val text: String? = if (item.isNull("text")) null else item.optString("text")
-            val emotion: String? = if (item.isNull("emotion")) null else item.optString("emotion")
-            val speaker: String = item.optString("speaker", "Ralsei")
-            val relativePath = emotionToRelativePath(emotion)
-            if (!text.isNullOrBlank()) out.add(DialogueEntry(speaker = speaker, text = text.trim(), relativePath = relativePath))
-        }
-
-        try {
-            val trimmed = reply.trim()
-            // First, try to parse a top-level object that follows the specified structured format.
-            val obj = JSONObject(trimmed)
-
-            // If a structured object is present, respect shouldResponse (if present) and response which may be null.
-            if (obj.has("response")) {
-                // If shouldResponse is explicitly false, don't create UI entries
-                if (obj.has("shouldResponse") && !obj.optBoolean("shouldResponse", true)) return emptyList()
-
-                val resp = obj.opt("response")
-                if (resp == null || resp == JSONObject.NULL) return emptyList()
-
-                if (resp is JSONArray) {
-                    for (i in 0 until resp.length()) {
-                        val item = resp.opt(i)
-                        when (item) {
-                            is JSONObject -> addFromJsonObject(item)
-                            is String -> if (item.isNotBlank()) out.add(DialogueEntry(text = item.trim()))
-                        }
-                    }
-                    if (out.isNotEmpty()) return out
-                } else if (resp is JSONObject) {
-                    // single-object response
-                    addFromJsonObject(resp)
-                    if (out.isNotEmpty()) return out
-                }
-            }
-        } catch (_: Exception) {
-            // not a JSON object; continue to next parsing strategy
-        }
-
-        // If not a top-level structured object, try parsing as a bare JSON array of entries
-        try {
-            val arr = JSONArray(reply.trim())
-            for (i in 0 until arr.length()) {
-                val item = arr.opt(i)
-                when (item) {
-                    is JSONObject -> {
-                        val text: String? = if (item.isNull("text")) null else item.optString("text")
-                        val emotion: String? = if (item.isNull("emotion")) null else item.optString("emotion")
-                        val speaker = item.optString("speaker", "Ralsei")
-                        val relativePath = emotionToRelativePath(emotion)
-                        if (!text.isNullOrBlank()) out.add(DialogueEntry(speaker = speaker, text = text.trim(), relativePath = relativePath))
-                    }
-                    is String -> if (item.isNotBlank()) out.add(DialogueEntry(text = item.trim()))
-                }
-            }
-            if (out.isNotEmpty()) return out
-        } catch (_: Exception) {
-            // not a JSON array either
-        }
-
-        // Fallback: split plain text by blank lines into chunks
-        val paragraphs = reply.split(Regex("\\n\\s*\\n")).map { it.trim() }.filter { it.isNotEmpty() }
-        if (paragraphs.size > 1) {
-            for (p in paragraphs) out.add(DialogueEntry(text = p))
-            return out
-        }
-
-        // As a last resort, split by sentences (simple split on period/newline).
-        val sentences = reply.split(Regex("(?<=[.!?])\\s+|\\n")).map { it.trim() }.filter { it.isNotEmpty() }
-        for (s in sentences) out.add(DialogueEntry(text = s))
-        return out
     }
 }

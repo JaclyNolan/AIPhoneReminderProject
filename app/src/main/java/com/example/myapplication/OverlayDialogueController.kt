@@ -103,18 +103,18 @@ class OverlayDialogueController(private val context: Context) {
             if (!attached) {
                 attachOverlay()
             }
-            sendPauseIntent()
+            ScreenshotPauseController.requestPause(context, "OverlayDialogueController")
         } else {
             if (attached) {
                 removeOverlay()
             }
-            sendResumeIntent()
+            ScreenshotPauseController.requestResume(context, "OverlayDialogueController")
         }
     }
 
     private fun attachOverlay() {
         try {
-            sendPauseIntent()
+            ScreenshotPauseController.requestPause(context, "OverlayDialogueController")
             if (composeView == null) composeView = ComposeView(context)
 
             // Ensure a lifecycle+saved-state+viewmodel owner is available for Compose (required for lifecycle-aware APIs)

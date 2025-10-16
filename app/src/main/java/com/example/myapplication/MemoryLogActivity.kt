@@ -5,7 +5,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -22,25 +21,49 @@ class MemoryLogActivity : ComponentActivity() {
             MyApplicationTheme(darkTheme = prefs.isDarkTheme()) {
                 val scope = rememberCoroutineScope()
                 var memories by rememberSaveable { mutableStateOf(listOf<MemoryEntry>()) }
+                var sceneTimeline by remember { mutableStateOf(listOf<EnhancedMemoryManager.SceneTimelineEntry>()) }
+                var condensedMemories by remember { mutableStateOf(listOf<EnhancedMemoryManager.CondensedMemoryItem>()) }
+                var recentIntents by remember { mutableStateOf(listOf<EnhancedMemoryManager.RecentIntent>()) }
+                var dialogueSummaries by remember { mutableStateOf(listOf<String>()) }
 
-                // Load memories on first composition
+                // Load all memory types on first composition
                 LaunchedEffect(Unit) {
-                    memories = withContext(Dispatchers.IO) { getMemory(ctx) }
+                    withContext(Dispatchers.IO) {
+                        memories = getMemory(ctx)
+                        EnhancedMemoryManager.initialize(ctx)
+                        sceneTimeline = EnhancedMemoryManager.getAllSceneTimeline(ctx)
+                        condensedMemories = EnhancedMemoryManager.getAllCondensedMemories(ctx)
+                        recentIntents = EnhancedMemoryManager.getRecentIntents(ctx, 100)
+                        dialogueSummaries = EnhancedMemoryManager.getAllDialogueSummaries(ctx)
+                    }
                 }
 
                 fun refresh() {
                     scope.launch(Dispatchers.IO) {
-                        val list = getMemory(ctx)
-                        memories = list
+                        memories = getMemory(ctx)
+                        sceneTimeline = EnhancedMemoryManager.getAllSceneTimeline(ctx)
+                        condensedMemories = EnhancedMemoryManager.getAllCondensedMemories(ctx)
+                        recentIntents = EnhancedMemoryManager.getRecentIntents(ctx, 100)
+                        dialogueSummaries = EnhancedMemoryManager.getAllDialogueSummaries(ctx)
                     }
                 }
 
                 MemoryLogScreen(
                     memories = memories,
+                    sceneTimeline = sceneTimeline,
+                    condensedMemories = condensedMemories,
+                    recentIntents = recentIntents,
+                    dialogueSummaries = dialogueSummaries,
                     onBack = { finish() },
                     onClear = {
                         scope.launch(Dispatchers.IO) {
                             clearMemory(ctx)
+                            refresh()
+                        }
+                    },
+                    onClearEnhanced = {
+                        scope.launch(Dispatchers.IO) {
+                            EnhancedMemoryManager.clear(ctx)
                             refresh()
                         }
                     },
@@ -49,7 +72,8 @@ class MemoryLogActivity : ComponentActivity() {
                             deleteMemory(ctx, entry)
                             refresh()
                         }
-                    }
+                    },
+                    onRefresh = { refresh() }
                 )
             }
         }

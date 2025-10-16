@@ -62,6 +62,14 @@ class MainForegroundService : Service() {
             Log.w(TAG, "Failed to initialize ChatManager", e)
         }
 
+        // Initialize EnhancedMemoryManager for the new memory architecture
+        try {
+            EnhancedMemoryManager.initialize(applicationContext)
+            Log.d(TAG, "EnhancedMemoryManager initialized in MainForegroundService process")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to initialize EnhancedMemoryManager", e)
+        }
+
         // Register control broadcasts
         val filter = IntentFilter().apply {
             addAction(ServiceActions.ACTION_PAUSE_SCREENSHOT)

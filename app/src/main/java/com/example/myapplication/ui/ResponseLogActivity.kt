@@ -36,15 +36,26 @@ class ResponseLogActivity : ComponentActivity() {
 @Composable
 fun ResponseLogScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    var responses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
+    var chatResponses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
+    var analyzerResponses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
     var showClearDialog by remember { mutableStateOf(false) }
-    var showRequest by remember { mutableStateOf(true) }
+    var showRequest by remember { mutableStateOf(false) }
     var showResponse by remember { mutableStateOf(true) }
+    var selectedTab by remember { mutableStateOf(0) }
 
     // Load responses on composition
     LaunchedEffect(Unit) {
-        responses = ResponseLogger.getAll(context)
+        chatResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.CHAT_MANAGER)
+        analyzerResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.ANALYZER_AGENT)
     }
+
+    fun refresh() {
+        chatResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.CHAT_MANAGER)
+        analyzerResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.ANALYZER_AGENT)
+    }
+
+    val currentResponses = if (selectedTab == 0) chatResponses else analyzerResponses
+    val currentLogType = if (selectedTab == 0) ResponseLogger.LogType.CHAT_MANAGER else ResponseLogger.LogType.ANALYZER_AGENT
 
     Scaffold(
         topBar = {
@@ -58,14 +69,12 @@ fun ResponseLogScreen(onBack: () -> Unit) {
                 actions = {
                     TextButton(
                         onClick = { showClearDialog = true },
-                        enabled = responses.isNotEmpty()
+                        enabled = currentResponses.isNotEmpty()
                     ) {
-                        Text("Clear All")
+                        Text("Clear ${if (selectedTab == 0) "Chat" else "Analyzer"}")
                     }
                     TextButton(
-                        onClick = {
-                            responses = ResponseLogger.getAll(context)
-                        }
+                        onClick = { refresh() }
                     ) {
                         Text("Refresh")
                     }
@@ -78,6 +87,41 @@ fun ResponseLogScreen(onBack: () -> Unit) {
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            // Tab selector
+            TabRow(
+                selectedTabIndex = selectedTab,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Tab(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    text = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("ChatManager")
+                            Text(
+                                text = "${chatResponses.size} logs",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                )
+                Tab(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    text = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("AnalyzerAgent")
+                            Text(
+                                text = "${analyzerResponses.size} logs",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                )
+            }
+
             // Toggle controls
             Card(
                 modifier = Modifier
@@ -126,13 +170,13 @@ fun ResponseLogScreen(onBack: () -> Unit) {
             }
 
             // Response list
-            if (responses.isEmpty()) {
+            if (currentResponses.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No responses logged yet",
+                        text = "No ${if (selectedTab == 0) "ChatManager" else "AnalyzerAgent"} responses logged yet",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -148,7 +192,7 @@ fun ResponseLogScreen(onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(vertical = 16.dp)
                 ) {
-                    items(responses, key = { it.timestamp + it.response.hashCode() }) { entry ->
+                    items(currentResponses, key = { it.timestamp + it.response.hashCode() }) { entry ->
                         ResponseEntryCard(
                             entry = entry,
                             showRequest = showRequest,
@@ -164,13 +208,13 @@ fun ResponseLogScreen(onBack: () -> Unit) {
     if (showClearDialog) {
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
-            title = { Text("Clear Response Log") },
-            text = { Text("Are you sure you want to clear all logged responses? This cannot be undone.") },
+            title = { Text("Clear ${if (selectedTab == 0) "ChatManager" else "AnalyzerAgent"} Log") },
+            text = { Text("Are you sure you want to clear all ${if (selectedTab == 0) "ChatManager" else "AnalyzerAgent"} logged responses? This cannot be undone.") },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        ResponseLogger.clear(context)
-                        responses = emptyList()
+                        ResponseLogger.clearByType(context, currentLogType)
+                        refresh()
                         showClearDialog = false
                     }
                 ) {
@@ -207,6 +251,20 @@ fun ResponseEntryCard(entry: ResponseLogger.ResponseEntry, showRequest: Boolean,
                 fontWeight = FontWeight.Bold
             )
 
+            // Token usage display (if any)
+            if (entry.promptTokens != null || entry.completionTokens != null || entry.totalTokens != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Tokens: " + listOfNotNull(
+                        entry.promptTokens?.let { "prompt=$it" },
+                        entry.completionTokens?.let { "completion=$it" },
+                        entry.totalTokens?.let { "total=$it" }
+                    ).joinToString(", "),
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
             Spacer(modifier = Modifier.height(12.dp))
 
             // Request section
@@ -219,7 +277,7 @@ fun ResponseEntryCard(entry: ResponseLogger.ResponseEntry, showRequest: Boolean,
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = entry.request,
+                    text = formatJson(entry.request),
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp
@@ -240,13 +298,69 @@ fun ResponseEntryCard(entry: ResponseLogger.ResponseEntry, showRequest: Boolean,
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = entry.response,
+                    text = formatJson(entry.response),
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp
                     ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Format JSON string with proper indentation for better readability
+ * This implementation uses org.json.JSONTokener.nextValue() to unwrap
+ * quoted JSON string literals (e.g. "{\"key\":\"val\"}") so
+ * the displayed text won't contain backslash-escaped quotes.
+ */
+private fun formatJson(jsonString: String, depth: Int = 0): String {
+    if (depth > 5) return jsonString // prevent pathological recursion
+    val s = jsonString.trim()
+    return try {
+        val tok = org.json.JSONTokener(s)
+        val value = tok.nextValue()
+        when (value) {
+            is org.json.JSONObject -> value.toString(2)
+            is org.json.JSONArray -> value.toString(2)
+            is String -> {
+                // The content was a quoted string. It may itself contain JSON
+                // with escaped characters; recurse to attempt pretty-printing.
+                formatJson(value, depth + 1)
+            }
+            else -> s
+        }
+    } catch (_: Exception) {
+        // Fallback: try previous approach of JSONObject/JSONArray parsing directly
+        try {
+            val obj = org.json.JSONObject(s)
+            obj.toString(2)
+        } catch (_: Exception) {
+            try {
+                val arr = org.json.JSONArray(s)
+                arr.toString(2)
+            } catch (_: Exception) {
+                // If nothing parses, try to extract inner JSON snippet (best-effort)
+                val start = s.indexOfFirst { it == '{' || it == '[' }
+                val end = s.indexOfLast { it == '}' || it == ']' }
+                if (start >= 0 && end > start) {
+                    val inner = s.substring(start, end + 1)
+                    try {
+                        val tok2 = org.json.JSONTokener(inner)
+                        val v2 = tok2.nextValue()
+                        return when (v2) {
+                            is org.json.JSONObject -> v2.toString(2)
+                            is org.json.JSONArray -> v2.toString(2)
+                            is String -> v2
+                            else -> s
+                        }
+                    } catch (_: Exception) {
+                        return s
+                    }
+                }
+                s
             }
         }
     }

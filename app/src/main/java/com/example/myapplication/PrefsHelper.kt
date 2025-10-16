@@ -3,6 +3,7 @@ package com.example.myapplication
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import java.util.Locale
 
 class PrefsHelper(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("screenshot_prefs", Context.MODE_PRIVATE)
@@ -62,4 +63,11 @@ class PrefsHelper(context: Context) {
     // New preference: auto-advance dialogues when the typewriter finishes. Default true for backward compatibility.
     fun getAutoAdvanceDialogues(): Boolean = prefs.getBoolean("auto_advance_dialogues", true)
     fun setAutoAdvanceDialogues(value: Boolean) = prefs.edit { putBoolean("auto_advance_dialogues", value) }
+
+    // Response decision thresholds for Ralsei's chat behavior
+    fun getShortResponseThreshold(): Float = String.format(Locale.US, "%.2f", prefs.getFloat("short_response_threshold", 0.5f)).toFloat()
+    fun setShortResponseThreshold(value: Float) = prefs.edit { putFloat("short_response_threshold", String.format(Locale.US, "%.2f", value.coerceIn(0.0f, 1.0f)).toFloat()) }
+
+    fun getLongResponseThreshold(): Float = String.format(Locale.US, "%.2f", prefs.getFloat("long_response_threshold", 0.7f)).toFloat()
+    fun setLongResponseThreshold(value: Float) = prefs.edit { putFloat("long_response_threshold", String.format(Locale.US, "%.2f", value.coerceIn(0.0f, 1.0f)).toFloat()) }
 }
