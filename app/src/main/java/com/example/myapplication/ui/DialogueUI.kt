@@ -236,13 +236,13 @@ private fun TypewriterDialogueBlock(
     val autoAdvanceState by rememberUpdatedState(newValue = autoAdvance)
 
     val ctx = LocalContext.current
-    // If the speaker is Ralsei and playSound is enabled, use the WAV asset as SFX
-    val ralseiSfx = remember(entry.speaker, playSound) {
-        if (playSound && entry.speaker.equals("Ralsei", ignoreCase = true)) {
-            SfxPlayer(ctx, "sound_effect/snd_txtral.wav")
+    // If the speaker is FRIDAY and playSound is enabled, use the WAV asset as SFX
+    val fridaySfx = remember(entry.speaker, playSound) {
+        if (playSound && entry.speaker.equals("FRIDAY", ignoreCase = true)) {
+            SfxPlayer(ctx, "sound_effect/snd_txtund.wav")
         } else null
     }
-    DisposableEffect(ralseiSfx) { onDispose { ralseiSfx?.release() } }
+    DisposableEffect(fridaySfx) { onDispose { fridaySfx?.release() } }
 
     val candidateNames = relativePathCandidateNames(entry.relativePath)
     val resId = candidateNames.map { name ->
@@ -253,15 +253,15 @@ private fun TypewriterDialogueBlock(
     val bitmapPainterOrNull = remember(entry.relativePath) {
         val assetPaths = mutableListOf<String>()
         val rel = entry.relativePath
-        // Prefer explicit relativePath if provided and appears to be under portrait/ralsei
+        // Prefer explicit relativePath if provided and appears to be under portrait/friday
         if (!rel.isNullOrBlank()) {
-            if (rel.startsWith("portrait/ralsei/")) assetPaths.add(rel) else assetPaths.add("portrait/ralsei/${File(rel).name}")
+            if (rel.startsWith("portrait/friday/")) assetPaths.add(rel) else assetPaths.add("portrait/friday/${File(rel).name}")
         }
-        // Next, try canonical portrait/ralsei/<base>.png
-        val base = try { File(rel ?: DEFAULT_RALSEI_PATH).nameWithoutExtension } catch (_: Exception) { "normal" }
-        assetPaths.add("portrait/ralsei/$base.png")
+        // Next, try canonical portrait/friday/<base>.png
+        val base = try { File(rel ?: DEFAULT_FRIDAY_PATH).nameWithoutExtension } catch (_: Exception) { "normal" }
+        assetPaths.add("portrait/friday/$base.png")
         // Last resort: default
-        assetPaths.add(DEFAULT_RALSEI_PATH)
+        assetPaths.add(DEFAULT_FRIDAY_PATH)
 
         var foundBmp: android.graphics.Bitmap? = null
         var i = 0
@@ -363,8 +363,8 @@ private fun TypewriterDialogueBlock(
             typedCount = i + 1
             if (playSound && !ch.isWhitespace()) {
                 try {
-                    // Play Ralsei asset if available, fallback to ToneGenerator otherwise
-                    if (ralseiSfx != null) ralseiSfx.play() else tone?.startTone(ToneGenerator.TONE_PROP_BEEP, 40)
+                    // Play FRIDAY asset if available, fallback to ToneGenerator otherwise
+                    if (fridaySfx != null) fridaySfx.play() else tone?.startTone(ToneGenerator.TONE_PROP_BEEP, 40)
                 } catch (_: Exception) {
                 }
             }

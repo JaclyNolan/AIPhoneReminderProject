@@ -64,7 +64,7 @@ class OverlayDialogueController(private val context: Context) {
                 val persisted = mutableListOf<DialogueEntry>()
                 for (i in 0 until arr.length()) {
                     val o = arr.optJSONObject(i) ?: continue
-                    val speaker = o.optString("speaker", "Ralsei")
+                    val speaker = o.optString("speaker", "FRIDAY")
                     val text = o.optString("text", "")
                     val rel = if (o.has("relativePath")) o.optString("relativePath") else null
                     if (text.isNotBlank()) persisted.add(DialogueEntry(speaker = speaker, text = text, relativePath = rel))

@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 import com.example.myapplication.ui.DialogueEntry
-import com.example.myapplication.ui.DEFAULT_RALSEI_PATH
+import com.example.myapplication.ui.DEFAULT_FRIDAY_PATH
 
 @Suppress("UNUSED_PARAMETER")
 @Composable
@@ -115,7 +115,7 @@ private fun HeaderCard() {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "Screen Capture AI",
+                text = "Screen Time AI Coach",
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                 textAlign = TextAlign.Center
@@ -127,7 +127,7 @@ private fun HeaderCard() {
             )
 
             Text(
-                text = "Your AI companion watches and learns from your screen activity",
+                text = "Your AI coach watches and learns from your screen activity",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
                 textAlign = TextAlign.Center
@@ -337,14 +337,14 @@ private fun DialogueSection(
 ) {
     val sampleEntries = listOf(
         DialogueEntry(
-            speaker = "Ralsei",
+            speaker = "FRIDAY",
             text = "Welcome! I'm here to observe and learn from your activities.",
-            relativePath = "/portrait/ralsei/excited.png"
+            relativePath = "/portrait/friday/excited.png"
         ),
         DialogueEntry(
-            speaker = "Ralsei",
+            speaker = "FRIDAY",
             text = "Tap the text to skip or advance through messages.",
-            relativePath = "/portrait/ralsei/smile.png"
+            relativePath = "/portrait/friday/smile.png"
         ),
         DialogueEntry(
             speaker = "System",
@@ -354,7 +354,7 @@ private fun DialogueSection(
 
     DialogueUI(
         initialDialogues = sampleEntries,
-        modifier = modifier,
+        modifier = modifier.padding(16.dp),
         portraitSize = 64.dp,
         lineHeight = 20.sp,
         charDelayMs = 36L,

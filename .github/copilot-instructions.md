@@ -1,6 +1,6 @@
 # Android Screenshot AI Companion - Copilot Instructions
 
-This Android app creates an AI companion (Ralsei from Deltarune) that observes user activity through automated screenshots and provides contextual dialogue responses.
+This Android app creates an AI coach (Ralsei from Deltarune) that observes user activity through automated screenshots and provides contextual dialogue responses.
 
 ## Architecture Overview
 

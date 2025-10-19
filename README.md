@@ -1,6 +1,6 @@
-# 🎮 Deltarune Companion - Android AI Screenshot Companion
+# 🎮 FRIDAY AI Companion - Android AI Screenshot Companion
 
-An Android app that creates an AI companion (Ralsei from Deltarune) that observes your device activity through automated screenshots and provides contextual dialogue responses via system overlays.
+An Android app that creates an AI companion (FRIDAY, inspired by Tony Stark's assistant) that observes your device activity through automated screenshots and provides contextual dialogue responses via system overlays.
 
 ![Android](https://img.shields.io/badge/Android-7.0%2B-green)
 ![Kotlin](https://img.shields.io/badge/Kotlin-1.9%2B-blue)
@@ -16,7 +16,7 @@ An Android app that creates an AI companion (Ralsei from Deltarune) that observe
 - **⚙️ Configurable Settings**: Customizable screenshot intervals, image quality, batch processing, and AI prompts
 - **🌓 Theme Support**: Dark and light mode with Material Design 3
 - **📊 Memory Log**: Review all stored memories with timestamps
-- **🎨 Ralsei Persona**: Character-driven AI responses matching Deltarune's Ralsei personality
+- **🎨 FRIDAY Persona**: Character-driven AI responses matching FRIDAY's intelligent, aware personality
 
 ## 🏗️ Architecture
 
@@ -26,7 +26,7 @@ An Android app that creates an AI companion (Ralsei from Deltarune) that observe
 |-----------|----------------|
 | **MainForegroundService** | Long-running background service managing screenshot automation and lifecycle |
 | **ScreenshotController** | Handles MediaProjection API for persistent virtual display and screenshot capture |
-| **OpenAIAnalyzer** | Batch processes screenshots via OpenAI Vision API with Ralsei persona prompts |
+| **OpenAIAnalyzer** | Batch processes screenshots via OpenAI Vision API with FRIDAY persona prompts |
 | **ChatManager** | Manages conversational AI with memory integration and dialogue generation |
 | **MemoryManager** | Persistent storage for user activity memories with timestamp tracking |
 | **OverlayDialogueController** | System overlay for displaying character dialogue bubbles over other apps |
@@ -140,7 +140,7 @@ The app requires several sensitive permissions for full functionality:
 - **Batch Size**: Number of images per OpenAI request (1-10, default: 5)
   - Larger batches = fewer API calls but longer processing time
   - Smaller batches = faster responses but more API calls
-- **Custom Prompts**: Override default Ralsei persona prompts in Advanced settings
+- **Custom Prompts**: Override default FRIDAY persona prompts in Advanced settings
 - **Memory Storage**: Automatic saving of significant user activities
 - **Model Selection**: Choose between GPT-4 Vision models (configurable in code)
 
@@ -158,10 +158,10 @@ The app requires several sensitive permissions for full functionality:
 3. Adjust screenshot interval and image quality in **Settings** tab
 4. Tap **Start Service** to begin screenshot monitoring
 
-### 🎭 Interacting with Ralsei
-- **Automatic Dialogue**: Ralsei observes your activity and occasionally comments via overlay bubbles
+### 🎭 Interacting with FRIDAY
+- **Automatic Dialogue**: FRIDAY observes your activity and occasionally comments via overlay bubbles
 - **Direct Chat**: Use the **Chat** tab to have real-time conversations
-- **Memory Review**: Check the **Memory Log** tab to see what Ralsei remembers about you
+- **Memory Review**: Check the **Memory Log** tab to see what FRIDAY remembers about you
 - **Dialogue History**: View past dialogues in the **Dialogue** tab
 
 ### 🚫 Activity Exclusions

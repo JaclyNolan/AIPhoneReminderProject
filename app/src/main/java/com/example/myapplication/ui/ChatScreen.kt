@@ -80,7 +80,7 @@ fun ChatScreen(
                 Column(modifier = Modifier.fillMaxWidth()) {
                     val displayName = when (m.role) {
                         "user" -> "You"
-                        "assistant" -> "Ralsei"
+                        "assistant" -> "FRIDAY"
                         else -> m.role.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
                     }
 

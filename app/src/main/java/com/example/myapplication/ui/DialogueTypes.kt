@@ -8,23 +8,23 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.Dp
 import java.io.File
 
-// New shared entry type used by DialogueUI: includes speaker (default Ralsei), text, and a
-// relativePath pointing to the portrait image inside the app assets (e.g. "portrait/ralsei/normal.png").
+// New shared entry type used by DialogueUI: includes speaker (default FRIDAY), text, and a
+// relativePath pointing to the portrait image inside the app assets (e.g. "portrait/friday/normal.png").
 data class DialogueEntry(
-    val speaker: String = "Ralsei",
+    val speaker: String = "FRIDAY",
     val text: String,
     // relativePath points to an asset path (under assets/) or null to let UI fall back to system image.
     val relativePath: String? = null
 )
 
-// Default Ralsei portrait asset path used when explicitly requested.
-const val DEFAULT_RALSEI_PATH = "portrait/ralsei/normal.png"
+// Default FRIDAY portrait asset path used when explicitly requested.
+const val DEFAULT_FRIDAY_PATH = "portrait/friday/normal.png"
 
 // Helper: convert an emotion string (from the model) into a canonical relative asset path.
 // Returns null when emotion is null/blank so UI can fall back to the system default image.
 fun emotionToRelativePath(emotion: String?): String? {
     val e = emotion?.trim().takeIf { !it.isNullOrBlank() } ?: return null
-    return "portrait/ralsei/${e}.png"
+    return "portrait/friday/${e}.png"
 }
 
 // Helper: given a relative asset path (or null), produce a prioritized list of drawable resource
@@ -32,7 +32,7 @@ fun emotionToRelativePath(emotion: String?): String? {
 // (no path separators) that the UI may try to resolve from R.drawable.
 fun relativePathCandidateNames(relativePath: String?): List<String> {
     val base = try {
-        if (relativePath.isNullOrBlank()) File(DEFAULT_RALSEI_PATH).nameWithoutExtension else File(relativePath).nameWithoutExtension
+        if (relativePath.isNullOrBlank()) File(DEFAULT_FRIDAY_PATH).nameWithoutExtension else File(relativePath).nameWithoutExtension
     } catch (_: Exception) {
         "normal"
     }
@@ -40,18 +40,18 @@ fun relativePathCandidateNames(relativePath: String?): List<String> {
     // sanitize to lowercase alpha numeric + underscore
     val sanitized = base.lowercase().replace(Regex("[^a-z0-9_]+"), "_").ifBlank { "normal" }
     val candidates = mutableListOf<String>()
-    if (sanitized.contains("ralsei")) {
-        // If filename already mentions ralsei, try it directly first
+    if (sanitized.contains("friday")) {
+        // If filename already mentions friday, try it directly first
         candidates.add(sanitized)
-        candidates.add("ralsei")
-        candidates.add("portrait_ralsei")
+        candidates.add("friday")
+        candidates.add("portrait_friday")
     } else {
-        candidates.add("ralsei_$sanitized")
-        candidates.add("portrait_ralsei_$sanitized")
+        candidates.add("friday_$sanitized")
+        candidates.add("portrait_friday_$sanitized")
         candidates.add("portrait_$sanitized")
         candidates.add(sanitized)
-        candidates.add("ralsei")
-        candidates.add("portrait_ralsei")
+        candidates.add("friday")
+        candidates.add("portrait_friday")
     }
     return candidates
 }
