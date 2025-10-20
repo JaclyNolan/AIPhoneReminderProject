@@ -27,6 +27,7 @@ class AdvancedActivity : ComponentActivity() {
                 var isScreenshotting by rememberSaveable { mutableStateOf(prefs.isScreenshotting()) }
                 var saveScreenshots by rememberSaveable { mutableStateOf(prefs.getSaveScreenshots()) }
                 var autoAdvance by rememberSaveable { mutableStateOf(prefs.getAutoAdvanceDialogues()) }
+                var autoVideoRecording by rememberSaveable { mutableStateOf(prefs.isAutoVideoRecordingEnabled()) }
 
                 AdvancedScreen(
                     interval = interval,
@@ -38,6 +39,7 @@ class AdvancedActivity : ComponentActivity() {
                     isScreenshotting = isScreenshotting,
                     saveScreenshots = saveScreenshots,
                     autoAdvance = autoAdvance,
+                    autoVideoRecording = autoVideoRecording,
                     onIntervalChange = { newInterval ->
                         interval = newInterval
                         prefs.setInterval(newInterval)
@@ -69,6 +71,10 @@ class AdvancedActivity : ComponentActivity() {
                     onAutoAdvanceChange = { v ->
                         autoAdvance = v
                         prefs.setAutoAdvanceDialogues(v)
+                    },
+                    onAutoVideoRecordingChange = { v ->
+                        autoVideoRecording = v
+                        prefs.setAutoVideoRecordingEnabled(v)
                     },
                     onClose = {
                         // Indicate that preferences may have changed so caller can refresh (e.g., autoAdvance)

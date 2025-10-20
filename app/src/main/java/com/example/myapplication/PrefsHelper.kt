@@ -62,4 +62,8 @@ class PrefsHelper(context: Context) {
     // New preference: auto-advance dialogues when the typewriter finishes. Default true for backward compatibility.
     fun getAutoAdvanceDialogues(): Boolean = prefs.getBoolean("auto_advance_dialogues", true)
     fun setAutoAdvanceDialogues(value: Boolean) = prefs.edit { putBoolean("auto_advance_dialogues", value) }
+
+    // New preference: enable automatic video recording for demo purposes. Default false.
+    fun isAutoVideoRecordingEnabled(): Boolean = prefs.getBoolean("auto_video_recording", false)
+    fun setAutoVideoRecordingEnabled(value: Boolean) = prefs.edit { putBoolean("auto_video_recording", value) }
 }

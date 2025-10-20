@@ -11,6 +11,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.provider.MediaStore
 import android.util.DisplayMetrics
@@ -22,50 +23,68 @@ import java.io.FileOutputStream
 import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.roundToInt
 
 /**
- * ScreenshotController manages the media projection, persistent virtual display and screenshots.
- * It is NOT a Service; a long-lived Service (MainForegroundService) should own an instance of this controller.
+ * ScreenshotController manages a single MediaProjection instance with a single VirtualDisplay.
+ * Frames are sourced from ImageReader and distributed (IPC-style) to both screenshot save and video encoder.
  */
 class ScreenshotController(private val context: Context, private val notifier: NotificationHelper) {
     companion object {
         private const val TAG = "ScreenshotController"
+        private const val VIDEO_FRAME_RATE = 30 // Use 30fps for CPU balance
     }
 
+    // Single MediaProjection instance shared between features
     private var mediaProjection: MediaProjection? = null
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var currentVirtualDisplay: android.hardware.display.VirtualDisplay? = null
+
+    // Single VirtualDisplay backed by ImageReader
+    private var screenshotVirtualDisplay: android.hardware.display.VirtualDisplay? = null
     private var currentImageReader: ImageReader? = null
-    // Keep a reference to the MediaProjection callback so we can unregister it later
+
+    // Video recording via MediaCodec-based encoder fed from ImageReader frames
+    private var videoEncoder: VideoEncoder? = null
+    private var isRecording = false
+    private var currentRecordingFile: File? = null
+
+    // Audio recording via AudioRecord + AAC encoder
+    private var audioEncoder: AudioEncoder? = null
+    private var muxerController: MuxerController? = null
+
+    // Background thread for ImageReader callbacks during recording
+    private var captureThread: HandlerThread? = null
+    private var captureHandler: Handler? = null
+
     private var projectionCallback: MediaProjection.Callback? = null
-    // Track whether we've created the persistent virtual display
     private var persistentDisplayCreated = false
-    // Store persistent display dimensions
     private var persistentWidth: Int = 0
     private var persistentHeight: Int = 0
     private var persistentDensity: Int = 0
 
+    // Frame listeners for additional IPC-like communication
+    private val frameListeners = CopyOnWriteArrayList<(Bitmap) -> Unit>()
+
     fun startProjection(resultCode: Int, resultData: Intent) {
-        Log.d(TAG, "Starting media projection")
+        Log.d(TAG, "Starting media projection with shared frame distribution")
 
         if (mediaProjection != null) {
-            Log.w(TAG, "startProjection called but mediaProjection already exists — ignoring duplicate start")
+            Log.w(TAG, "MediaProjection already exists")
             return
         }
 
         val projectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
-        // Register a MediaProjection.Callback before starting capture to manage resources
+
         try {
             projectionCallback = object : MediaProjection.Callback() {
                 override fun onStop() {
-                    // Ensure cleanup happens on main thread
                     mainHandler.post {
                         try {
                             release()
                         } catch (e: Exception) {
-                            Log.e(TAG, "Error during release in projection callback", e)
+                            Log.e(TAG, "Error during release", e)
                         }
                     }
                 }
@@ -74,35 +93,23 @@ class ScreenshotController(private val context: Context, private val notifier: N
                 mediaProjection?.registerCallback(cb, mainHandler)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to register MediaProjection callback", e)
+            Log.e(TAG, "Failed to register callback", e)
         }
 
-        // Create the persistent virtual display and ImageReader so we don't recreate it on every capture
-        try {
-            setupPersistentVirtualDisplay()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to setup persistent virtual display", e)
-        }
+        // Setup virtual display with ImageReader for frame capture
+        setupVirtualDisplayAndRecording()
     }
 
     fun isReady(): Boolean = mediaProjection != null
-
-    // Allow external callers to check if the persistent virtual display has been created
     fun isPersistentDisplayReady(): Boolean = persistentDisplayCreated
 
     fun takeScreenshot(notify: Boolean) {
-        if (mediaProjection == null) {
-            Log.e(TAG, "Cannot take screenshot: mediaProjection is null")
-            return
-        }
-
         if (!persistentDisplayCreated || currentImageReader == null) {
-            Log.e(TAG, "Persistent virtual display not available. Cannot take screenshot.")
+            Log.e(TAG, "Virtual display not ready")
             return
         }
 
-        // Acquire the latest image from the existing ImageReader on the main thread
-        mainHandler.postDelayed({
+        mainHandler.post {
             val image = currentImageReader?.acquireLatestImage()
             try {
                 if (image != null) {
@@ -113,115 +120,207 @@ class ScreenshotController(private val context: Context, private val notifier: N
                     val rowPadding = rowStride - pixelStride * persistentWidth
                     val bitmapWidth = persistentWidth + rowPadding / pixelStride
                     val bitmapHeight = persistentHeight
-                    val bitmap = Bitmap.createBitmap(
-                        bitmapWidth,
-                        bitmapHeight,
-                        Bitmap.Config.ARGB_8888
-                    )
+                    val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
                     bitmap.copyPixelsFromBuffer(buffer)
-                    saveBitmap(bitmap)
+
+                    val croppedBitmap = if (bitmapWidth != persistentWidth) {
+                        Bitmap.createBitmap(bitmap, 0, 0, persistentWidth, persistentHeight)
+                    } else bitmap
+
+                    val bitmapCopy = croppedBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                    frameListeners.forEach { it.invoke(bitmapCopy) }
+
+                    saveBitmap(croppedBitmap)
+
+                    if (croppedBitmap != bitmap) croppedBitmap.recycle()
                     bitmap.recycle()
+
                     if (notify) notifier.showScreenshotNotification()
-                    Log.d(TAG, "Screenshot saved successfully (persistent display)")
-                } else {
-                    Log.e(TAG, "Failed to acquire image from persistent ImageReader")
+                    Log.d(TAG, "Screenshot captured and distributed")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error taking screenshot (persistent display)", e)
+                Log.e(TAG, "Error capturing screenshot", e)
             } finally {
                 image?.close()
             }
-        }, 300)
+        }
     }
 
-    // Create a persistent ImageReader and VirtualDisplay on the main thread
-    private fun setupPersistentVirtualDisplay() {
-        if (persistentDisplayCreated) {
-            Log.d(TAG, "Persistent virtual display already created")
-            return
-        }
-
-        val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val metrics = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        windowManager.defaultDisplay.getRealMetrics(metrics)
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
-        val density = metrics.densityDpi
-
-        Log.d(TAG, "Creating persistent virtual display: ${width}x${height} @${density}dpi")
-
+    private fun setupVirtualDisplayAndRecording() {
         mainHandler.post {
             try {
-                if (mediaProjection == null) {
-                    Log.e(TAG, "Cannot create virtual display: mediaProjection is null")
-                    return@post
-                }
+                val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val metrics = DisplayMetrics()
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay.getRealMetrics(metrics)
+                val width = metrics.widthPixels
+                val height = metrics.heightPixels
+                val density = metrics.densityDpi
 
-                // create ImageReader
-                val imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2).also {
+                val prefs = PrefsHelper(context)
+                val shouldRecord = prefs.isAutoVideoRecordingEnabled()
+
+                // Always create a single ImageReader-backed VirtualDisplay (maxImages=3 to allow concurrent access)
+                val imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3).also {
                     currentImageReader = it
                 }
 
-                if (projectionCallback == null) {
-                    Log.w(TAG, "No MediaProjection.Callback registered when setting up persistent display; registering one now")
-                    projectionCallback = object : MediaProjection.Callback() {
-                        override fun onStop() {
-                            Log.d(TAG, "MediaProjection callback (persistent): onStop called")
-                            mainHandler.post { release() }
-                        }
-                    }
-                    projectionCallback?.let { cb ->
-                        mediaProjection?.registerCallback(cb, mainHandler)
-                    }
+                screenshotVirtualDisplay = mediaProjection?.createVirtualDisplay(
+                    "ScreenCaptureShared",
+                    width,
+                    height,
+                    density,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    imageReader.surface,
+                    null,
+                    mainHandler
+                )
+
+                persistentDisplayCreated = screenshotVirtualDisplay != null
+                if (persistentDisplayCreated) {
+                    persistentWidth = width
+                    persistentHeight = height
+                    persistentDensity = density
                 }
 
-                try {
-                    mediaProjection?.createVirtualDisplay(
-                        "PersistentScreenCapture",
-                        width,
-                        height,
-                        density,
-                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                        imageReader.surface,
-                        null,
-                        null
-                    ).also { currentVirtualDisplay = it }
-                    persistentDisplayCreated = currentVirtualDisplay != null
-                    if (persistentDisplayCreated) {
-                        persistentWidth = width
-                        persistentHeight = height
-                        persistentDensity = density
-                    }
-                    Log.d(TAG, "Persistent virtual display created: $persistentDisplayCreated")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to create persistent virtual display", e)
-                    currentImageReader?.close()
-                    currentImageReader = null
-                    persistentDisplayCreated = false
+                Log.d(TAG, "MediaProjection setup complete: ${width}x${height} (single VD)")
+
+                if (shouldRecord) {
+                    startVideoRecording()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Exception while setting up persistent virtual display", e)
+                Log.e(TAG, "Error setting up projection", e)
+                cleanup()
             }
         }
     }
 
-    fun release() {
-        currentVirtualDisplay?.release()
-        currentImageReader?.close()
-        // Unregister callback to avoid leaks
+    private fun startVideoRecording() {
+        if (isRecording || currentImageReader == null || !persistentDisplayCreated) return
         try {
-            projectionCallback?.let {
-                mediaProjection?.unregisterCallback(it)
-                Log.d(TAG, "MediaProjection callback unregistered")
+            // Prepare output file
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val fileName = "Recording_$timestamp.mp4"
+            val storageDir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+            currentRecordingFile = File(storageDir, fileName)
+
+            // Prepare audio (playback capture if possible, else MIC). We decide muxer expectation based on success.
+            val audio = AudioEncoder()
+            val audioPrepared = audio.prepare(context, mediaProjection)
+
+            // Create shared muxer controller (coordinate video+audio)
+            val mux = MuxerController(currentRecordingFile!!, expectAudio = audioPrepared)
+            muxerController = mux
+
+            // Start video encoder using shared muxer
+            videoEncoder = VideoEncoder(persistentWidth, persistentHeight, VIDEO_FRAME_RATE)
+            videoEncoder?.start(currentRecordingFile!!, mux)
+
+            // Start audio encoder if prepared
+            if (audioPrepared) {
+                audioEncoder = audio
+                audioEncoder?.start(mux)
+            } else {
+                Log.w(TAG, "Audio capture not available; recording video-only")
             }
+
+            // Start capture thread & listener for video frames
+            captureThread = HandlerThread("ImageReaderCapture").also { it.start() }
+            captureHandler = Handler(captureThread!!.looper)
+
+            currentImageReader?.setOnImageAvailableListener({ reader ->
+                val image = reader.acquireLatestImage()
+                if (image == null) return@setOnImageAvailableListener
+                try {
+                    val planes = image.planes
+                    val buffer = planes[0].buffer
+                    val pixelStride = planes[0].pixelStride
+                    val rowStride = planes[0].rowStride
+                    val rowPadding = rowStride - pixelStride * persistentWidth
+                    val bitmapWidth = persistentWidth + rowPadding / pixelStride
+                    val bitmapHeight = persistentHeight
+                    val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+                    bitmap.copyPixelsFromBuffer(buffer)
+
+                    val cropped = if (bitmapWidth != persistentWidth) {
+                        Bitmap.createBitmap(bitmap, 0, 0, persistentWidth, persistentHeight)
+                    } else bitmap
+
+                    // Feed to encoder (makes its own internal copy)
+                    videoEncoder?.queueFrame(cropped)
+
+                    // Also distribute to in-app listeners by sharing a copy
+                    val copyForListeners = cropped.copy(Bitmap.Config.ARGB_8888, false)
+                    frameListeners.forEach { it.invoke(copyForListeners) }
+
+                    if (cropped != bitmap) cropped.recycle()
+                    bitmap.recycle()
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Error processing frame for recording", t)
+                } finally {
+                    try { image.close() } catch (_: Exception) {}
+                }
+            }, captureHandler)
+
+            isRecording = true
+            Log.i(TAG, "Recording started (Video+${if (audioPrepared) "Audio" else "NoAudio"}), file: ${currentRecordingFile?.absolutePath}")
         } catch (e: Exception) {
-            Log.w(TAG, "Error unregistering MediaProjection callback", e)
+            Log.e(TAG, "Failed to start video recording", e)
+            stopRecording()
         }
+    }
+
+    fun stopRecording() {
+        if (!isRecording) return
+        isRecording = false
+
+        // Stop frame listener first to stop producing frames
+        try { currentImageReader?.setOnImageAvailableListener(null, null) } catch (_: Exception) {}
+
+        // Stop encoders
+        try { audioEncoder?.stop() } catch (e: Exception) { Log.e(TAG, "Error stopping audio encoder", e) }
+        try { videoEncoder?.stop() } catch (e: Exception) { Log.e(TAG, "Error stopping video encoder", e) }
+
+        // Shutdown capture thread
+        try { captureThread?.quitSafely(); captureThread?.join(500) } catch (_: Exception) {}
+        captureThread = null
+        captureHandler = null
+
+        // Release encoders and muxer
+        try { audioEncoder?.release() } catch (_: Exception) {}
+        audioEncoder = null
+        videoEncoder = null
+
+        try { muxerController?.stopAndRelease() } catch (_: Exception) {}
+        muxerController = null
+
+        Log.d(TAG, "Recording stopped: ${currentRecordingFile?.absolutePath}")
+    }
+
+    fun release() {
+        stopRecording()
+        cleanup()
+
         mediaProjection?.stop()
         mediaProjection = null
         projectionCallback = null
         persistentDisplayCreated = false
+    }
+
+    private fun cleanup() {
+        screenshotVirtualDisplay?.release()
+        screenshotVirtualDisplay = null
+
+        currentImageReader?.close()
+        currentImageReader = null
+
+        try {
+            projectionCallback?.let {
+                mediaProjection?.unregisterCallback(it)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error unregistering callback", e)
+        }
     }
 
     private fun saveBitmap(bitmap: Bitmap): String? {
@@ -244,12 +343,10 @@ class ScreenshotController(private val context: Context, private val notifier: N
                 bitmap
             }
 
-            // First compress into memory so we can both write and optionally send the bytes directly
             val baos = ByteArrayOutputStream()
             val compressedOk = bitmapToSave.compress(Bitmap.CompressFormat.JPEG, quality, baos)
             val imageBytes = baos.toByteArray()
 
-            // Check user preference: whether to save screenshots to device storage
             val saveToDevice = prefs.getSaveScreenshots()
 
             if (saveToDevice) {
@@ -290,14 +387,11 @@ class ScreenshotController(private val context: Context, private val notifier: N
                     Log.d(TAG, "Saved image to storage: $savedUriString")
                 }
             } else {
-                // Preference disables saving to device; still keep bytes for analysis
                 Log.d(TAG, "Skipping saving screenshot to device (user preference)")
             }
 
-            // Enqueue bytes directly for OpenAI analysis if enabled (preferred over passing a URI)
             try {
                 if (prefs.isOpenAIAnalysisEnabled()) {
-                    // Use the enqueueImageBytes API to avoid later file reads and permission issues
                     OpenAIAnalyzer.enqueueImageBytes(context, imageBytes)
                 }
             } catch (e: Exception) {
@@ -308,11 +402,7 @@ class ScreenshotController(private val context: Context, private val notifier: N
             Log.e(TAG, "Error saving bitmap", e)
             e.printStackTrace()
         } finally {
-            // Recycle scaled bitmap if we created one
-            try {
-                scaledBitmap?.recycle()
-            } catch (_: Exception) {
-            }
+            try { scaledBitmap?.recycle() } catch (_: Exception) {}
         }
 
         return savedUriString

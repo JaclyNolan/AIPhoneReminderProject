@@ -33,6 +33,7 @@ fun AdvancedScreen(
     isScreenshotting: Boolean,
     saveScreenshots: Boolean,
     autoAdvance: Boolean,
+    autoVideoRecording: Boolean,
     onIntervalChange: (Long) -> Unit,
     onScaleChange: (Float) -> Unit,
     onQualityChange: (Int) -> Unit,
@@ -41,6 +42,7 @@ fun AdvancedScreen(
     onOpenAIBatchSizeChange: (Int) -> Unit,
     onSaveScreenshotsChange: (Boolean) -> Unit,
     onAutoAdvanceChange: (Boolean) -> Unit,
+    onAutoVideoRecordingChange: (Boolean) -> Unit,
     onClose: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize().systemBarsPadding().imePadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -58,6 +60,12 @@ fun AdvancedScreen(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Checkbox(checked = autoAdvance, onCheckedChange = onAutoAdvanceChange)
             Text("Auto-advance dialogues when typing finishes", style = MaterialTheme.typography.bodyMedium)
+        }
+
+        // Auto video recording toggle
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Checkbox(checked = autoVideoRecording, onCheckedChange = onAutoVideoRecordingChange)
+            Text("Enable auto phone recording (for video demo purpose)", style = MaterialTheme.typography.bodyMedium)
         }
 
         Text("Screenshot interval: ${interval / 1000} s", style = MaterialTheme.typography.bodyMedium)

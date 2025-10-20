@@ -38,8 +38,8 @@ fun ResponseLogScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var responses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
     var showClearDialog by remember { mutableStateOf(false) }
-    var showRequest by remember { mutableStateOf(true) }
-    var showResponse by remember { mutableStateOf(true) }
+    var showRequest by remember { mutableStateOf(false) }
+    var showResponse by remember { mutableStateOf(false) }
 
     // Load responses on composition
     LaunchedEffect(Unit) {

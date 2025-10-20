@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity() {
                     openAIApiKey = openAIApiKey,
                     openAIBatchSize = openAIBatchSize,
                     onStartProjection = {
+                        // Start screen capture directly
                         screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
                     },
                     onIntervalChange = { newInterval ->
