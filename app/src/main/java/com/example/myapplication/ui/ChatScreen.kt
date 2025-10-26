@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.myapplication.ChatManager
+import com.example.myapplication.Characters
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -80,7 +81,7 @@ fun ChatScreen(
                 Column(modifier = Modifier.fillMaxWidth()) {
                     val displayName = when (m.role) {
                         "user" -> "You"
-                        "assistant" -> "FRIDAY"
+                        "assistant" -> Characters.ACTIVE.name
                         else -> m.role.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
                     }
 

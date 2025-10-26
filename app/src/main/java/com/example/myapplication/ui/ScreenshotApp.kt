@@ -11,9 +11,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.myapplication.Characters
 
 import com.example.myapplication.ui.DialogueEntry
-import com.example.myapplication.ui.DEFAULT_FRIDAY_PATH
 
 @Suppress("UNUSED_PARAMETER")
 @Composable
@@ -337,18 +337,19 @@ private fun DialogueSection(
 ) {
     val sampleEntries = listOf(
         DialogueEntry(
-            speaker = "FRIDAY",
+            speaker = Characters.ACTIVE.name,
             text = "Welcome! I'm here to observe and learn from your activities.",
-            relativePath = "/portrait/friday/excited.png"
+            relativePath = "/${Characters.ACTIVE.portraitFolder}/excited.png"
         ),
         DialogueEntry(
-            speaker = "FRIDAY",
+            speaker = Characters.ACTIVE.name,
             text = "Tap the text to skip or advance through messages.",
-            relativePath = "/portrait/friday/smile.png"
+            relativePath = "/${Characters.ACTIVE.portraitFolder}/smile.png"
         ),
         DialogueEntry(
             speaker = "System",
-            text = "Configure settings above to customize behavior and permissions."
+            text = "Configure settings above to customize behavior and permissions.",
+            relativePath = "/portrait/android/normal.png"
         )
     )
 

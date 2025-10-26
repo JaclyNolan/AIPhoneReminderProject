@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.unit.Constraints
 import com.example.myapplication.R
+import com.example.myapplication.Characters
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -236,13 +237,13 @@ private fun TypewriterDialogueBlock(
     val autoAdvanceState by rememberUpdatedState(newValue = autoAdvance)
 
     val ctx = LocalContext.current
-    // If the speaker is FRIDAY and playSound is enabled, use the WAV asset as SFX
-    val fridaySfx = remember(entry.speaker, playSound) {
-        if (playSound && entry.speaker.equals("FRIDAY", ignoreCase = true)) {
-            SfxPlayer(ctx, "sound_effect/snd_txtund.wav")
+    // If the speaker matches active character and playSound is enabled, use the WAV asset as SFX
+    val characterSfx = remember(entry.speaker, playSound) {
+        if (playSound && entry.speaker.equals(Characters.ACTIVE.name, ignoreCase = true)) {
+            Characters.ACTIVE.soundEffectPath?.let { SfxPlayer(ctx, it) }
         } else null
     }
-    DisposableEffect(fridaySfx) { onDispose { fridaySfx?.release() } }
+    DisposableEffect(characterSfx) { onDispose { characterSfx?.release() } }
 
     val candidateNames = relativePathCandidateNames(entry.relativePath)
     val resId = candidateNames.map { name ->
@@ -253,15 +254,33 @@ private fun TypewriterDialogueBlock(
     val bitmapPainterOrNull = remember(entry.relativePath) {
         val assetPaths = mutableListOf<String>()
         val rel = entry.relativePath
-        // Prefer explicit relativePath if provided and appears to be under portrait/friday
+
+        // If relativePath is explicitly provided, respect it first
         if (!rel.isNullOrBlank()) {
-            if (rel.startsWith("portrait/friday/")) assetPaths.add(rel) else assetPaths.add("portrait/friday/${File(rel).name}")
+            // Clean up the path (remove leading slash if present)
+            val cleanPath = rel.removePrefix("/")
+            assetPaths.add(cleanPath)
+
+            // Also try with leading slash in case it's expected
+            if (cleanPath != rel) {
+                assetPaths.add(rel)
+            }
+
+            // If the path doesn't match the active character's folder, still try character folder as fallback
+            if (!cleanPath.startsWith("${Characters.ACTIVE.portraitFolder}/")) {
+                val filename = File(rel).name
+                assetPaths.add("${Characters.ACTIVE.portraitFolder}/$filename")
+            }
         }
-        // Next, try canonical portrait/friday/<base>.png
-        val base = try { File(rel ?: DEFAULT_FRIDAY_PATH).nameWithoutExtension } catch (_: Exception) { "normal" }
-        assetPaths.add("portrait/friday/$base.png")
-        // Last resort: default
-        assetPaths.add(DEFAULT_FRIDAY_PATH)
+
+        // Fallback: try canonical portrait path with base name from active character
+        val base = try {
+            File(rel ?: Characters.ACTIVE.defaultPortraitPath).nameWithoutExtension
+        } catch (_: Exception) { "normal" }
+        assetPaths.add("${Characters.ACTIVE.portraitFolder}/$base.png")
+
+        // Last resort: default portrait from active character
+        assetPaths.add(Characters.ACTIVE.defaultPortraitPath)
 
         var foundBmp: android.graphics.Bitmap? = null
         var i = 0
@@ -364,7 +383,7 @@ private fun TypewriterDialogueBlock(
             if (playSound && !ch.isWhitespace()) {
                 try {
                     // Play FRIDAY asset if available, fallback to ToneGenerator otherwise
-                    if (fridaySfx != null) fridaySfx.play() else tone?.startTone(ToneGenerator.TONE_PROP_BEEP, 40)
+                    if (characterSfx != null) characterSfx.play() else tone?.startTone(ToneGenerator.TONE_PROP_BEEP, 40)
                 } catch (_: Exception) {
                 }
             }
