@@ -39,6 +39,11 @@ object ChatManager {
     // Ralsei's current activity (configurable - can be enhanced later)
     private const val RALSEI_ACTIVITY_IMPORTANCE = 0.6
 
+    // Screenshot pause management for user chat
+    private const val USER_CHAT_TIMEOUT_MS = 60_000L // 60 seconds max wait for LLM response
+    private const val USER_CHAT_COOLDOWN_MS = 60_000L // 60 seconds cooldown after response
+    private var userChatCooldownJob: Job? = null
+
     /**
      * Build dynamic prompt with configurable response thresholds
      */
@@ -66,19 +71,22 @@ You occasionally show excitement ("Wow, Kris!") and always try to teach or help.
 - Say what Ralsei will be thinking in the "thinking" section in the json response
 - Prefer to use many emotions in a single response when appropriate.
 - Save memories of important events, feelings, and facts about the user and yourself.
-- The decisionScore determines shouldResponse and the length/detail of your response.
-- The "reasoning" field is Ralsei's internal logic, not emotional or poetic thinking.
+- The decision_score determines whether to respond and the length/detail of your response.
 - The "thinking" field inside each response item is Ralsei's emotional reflection or momentary thought, often gentle or personal.
-- If you are saving a memory, make sure the new_memory_entry is a concise summary of the event or fact being remembered.
-- If you are saving a memory, make sure to set save_to_memory to true, otherwise set it to false and new_memory_entry to null.
-- If you are saving a memory, ensure it is not a duplicate of a recently saved memory (within the last 30 minutes).
-- If you are saving a memory, ensure it is relevant and significant to the ongoing conversation or relationship.
-- If you are saving a memory, ensure it is not trivial or mundane (e.g., "saw a tree").
+- If you want to save a memory, set new_memory_entry to a concise summary of the event or fact being remembered.
+- If not saving a memory, set new_memory_entry to null.
+- Ensure memory entries are not duplicates of recently saved memories (within the last 30 minutes).
+- Ensure memory entries are relevant and significant to the ongoing conversation or relationship.
+- Ensure memory entries are not trivial or mundane (e.g., "saw a tree").
 - ALWAYS perform MEMORY CONTEXT REASONING before responding.
 - Check recent_intents for similar intent within last 30 minutes and reduce DecisionScore accordingly.
 - If you've already responded with similar intent recently, prefer staying quiet or use micro_observe.
+- If decision_score < shortThreshold, set response to null (stay quiet).
+- If decision_score >= shortThreshold, provide appropriate response based on score range.
 
-Return JSON ONLY in this exact format:
+CRITICAL: Return RAW JSON ONLY. DO NOT wrap in markdown code blocks (```json). DO NOT include any text before or after the JSON object.
+
+Return JSON in this exact format:
 {
   "calculation": {
     "user_activity_weight": {
@@ -98,10 +106,7 @@ Return JSON ONLY in this exact format:
     },
     "finial_calculation": "(UserActivityWeight × 0.5) + (EmotionalResonance × 0.4) − (RalseiActivityImportance × 0.2) + RepeatPenalty"
   },
-  "reasoning": "string or null",
   "decision_score": "number",
-  "shouldResponse": true/false,
-  "save_to_memory": true/false,
   "new_memory_entry": "string or null",
   "intent_category": "string (comfort/encouragement/curiosity/concern/observation/teaching/playful/companionship/micro_observe)",
   "response": [
@@ -120,25 +125,6 @@ For each object you output, the "emotion" field MUST be exactly one of these str
 
 NEVER invent new emotions.
 NEVER combine two emotions unless it is one of the above strings exactly.
-
-## [REASONING RULE]
-
-Before producing your final JSON response, Ralsei must think aloud (inside the `"reasoning"` field) about:
-- Whether what the user is doing *relates emotionally or thematically* to your current activity.
-- Check recent_intents buffer: have you already spoken about this recently (within 30min)?
-- If similar intent found in recent_intents, apply penalty: $INTENT_REPEAT_PENALTY_2X per occurrence (2+ times), $INTENT_REPEAT_PENALTY_4X if 4+ times.
-- You MUST include the `decision_score` in the final JSON.
-- You MUST mention memory context if memories are present in the developer payload.
-
-It's the inner monologue of Ralsei before speaking — a mix of reflection and calculation.
-
-It should include:
-- A summary of what's happening (user's screen or message).
-- A reflection on what Ralsei feels about it.
-- A connection to Ralsei's current activity or emotional context.
-- Memory context check: "I remember [X] from recent memories..."
-- Intent repetition check: "I spoke about [intent] [N] times in last 30min, applying penalty..."
-- The logic of whether to speak and what tone to take.
 
 ## [SHOULD RESPONSE CHECKLIST]
 
@@ -174,7 +160,7 @@ This factor is treated as an **additive numeric value** in the DecisionScore for
 
 ### 4. DECISION FORMULA
 
-DecisionScore = (UserActivityWeight × 0.5) + (EmotionalResonance × 0.4) − (RalseiActivityImportance × 0.2) + RepeatPenalty
+DecisionScore = (UserActivityWeight × 0.7) + (EmotionalResonance × 0.6) − (RalseiActivityImportance × 0.2) + RepeatPenalty
 
 RepeatPenalty calculation:
 - If same intent_category appears 2-3 times in recent_intents (last 30min): $INTENT_REPEAT_PENALTY_2X
@@ -192,6 +178,7 @@ RepeatPenalty calculation:
 - Even if the user's activity feels interesting, Ralsei should only speak if the shared emotional or contextual resonance passes the response threshold.
 - Always check recent_intents and apply appropriate penalties.
 - Prefer micro_observe or staying quiet if you've recently spoken with similar intent.
+- Think through memory context and intent repetition as part of your internal calculation process.
 
 ## [CALCULATION STRUCTURE INSTRUCTIONS]
 Each subscore in "calculation" must be explicitly reasoned from the context:
@@ -269,22 +256,36 @@ Always include intent_category in your response for tracking purposes.
     }
 
     // Helper: decide whether an assistant reply should be stored in history.
-    // If the reply is structured JSON and contains both save_to_memory=false and shouldResponse=false,
-    // we treat it as not intended to be added to chat history.
-    private fun shouldStoreAssistantReply(reply: String?): Boolean {
+    // Store if decision_score >= threshold OR if new_memory_entry is present
+    private fun shouldStoreAssistantReply(reply: String?, shortThreshold: Float): Boolean {
         if (reply.isNullOrBlank()) return false
         try {
             val trimmed = reply.trim()
-            // Try parse as object
             val obj = JSONObject(trimmed)
-            // If object contains the explicit flags, use them
-            if (obj.has("save_to_memory") || obj.has("shouldResponse")) {
-                val save = obj.optBoolean("save_to_memory", false)
-                val should = obj.optBoolean("shouldResponse", false)
-                return save || should
+
+            // Check decision_score against threshold
+            if (obj.has("decision_score")) {
+                val decisionScore = obj.optDouble("decision_score", Double.NaN)
+                if (!decisionScore.isNaN() && decisionScore >= shortThreshold) {
+                    return true
+                }
             }
-            // If it doesn't have flags, check if it has a 'response' array -> assume store
-            if (obj.has("response")) return true
+
+            // Check if there's a memory to save
+            if (obj.has("new_memory_entry")) {
+                val memoryEntry = obj.optString("new_memory_entry", "")
+                if (memoryEntry.isNotBlank() && memoryEntry != "null") {
+                    return true
+                }
+            }
+
+            // If it has a 'response' array with content, assume store
+            if (obj.has("response")) {
+                val responseArray = obj.optJSONArray("response")
+                if (responseArray != null && responseArray.length() > 0) {
+                    return true
+                }
+            }
         } catch (_: Exception) {
             // Not a direct object, try array
         }
@@ -295,11 +296,6 @@ Always include intent_category in your response for tracking purposes.
                 val first = arr.opt(0)
                 if (first is JSONObject) {
                     val o = first
-                    if (o.has("save_to_memory") || o.has("shouldResponse")) {
-                        val save = o.optBoolean("save_to_memory", false)
-                        val should = o.optBoolean("shouldResponse", false)
-                        return save || should
-                    }
                     if (o.has("text") || o.has("thinking")) return true
                 }
             }
@@ -369,13 +365,14 @@ Always include intent_category in your response for tracking purposes.
     }
 
     // Called when developer suggests a response; create a chat turn and get assistant reply.
+    // This is used by AnalyzerAgent - does NOT pause screenshots (AnalyzerAgent handles its own pausing)
     fun handleDeveloperSuggestion(ctx: Context, suggestion: String) {
         initialize(ctx)
         scope.launch {
             try {
                 // Treat developer suggestion as a developer message (not a user message)
                 addDeveloperMessage(ctx, suggestion)
-                val reply = sendChatRequest(ctx, suggestion)
+                val reply = sendChatRequest(ctx, suggestion, isUserInitiated = false)
                 if (!reply.isNullOrBlank()) {
                     // Check decision_score threshold
                     val decisionScore = extractDecisionScore(reply)
@@ -390,7 +387,7 @@ Always include intent_category in your response for tracking purposes.
                     }
 
                     // Only add assistant reply to history if appropriate per reply flags
-                    if (shouldStoreAssistantReply(reply)) {
+                    if (shouldStoreAssistantReply(reply, shortThreshold)) {
                         // Save the FULL JSON response to history, not just the response field
                         synchronized(history) {
                             history.add(ChatMessage("assistant", reply))
@@ -421,52 +418,95 @@ Always include intent_category in your response for tracking purposes.
     }
 
     // Public API to send a user message and get assistant reply
+    // This is called from ChatScreen - PAUSES screenshots with timeout and cooldown
     suspend fun sendUserMessage(ctx: Context, text: String): String? = withContext(Dispatchers.IO) {
         initialize(ctx)
-        addUserMessage(ctx, text)
-        val reply = sendChatRequest(ctx, text)
-        if (!reply.isNullOrBlank()) {
-            // Check decision_score threshold
-            val decisionScore = extractDecisionScore(reply)
-            val prefs = PrefsHelper(ctx)
-            val shortThreshold = prefs.getShortResponseThreshold()
-            if (decisionScore != null && decisionScore < shortThreshold) {
-                Log.d(
-                    TAG,
-                    "Response skipped: decision_score ($decisionScore) below threshold ($shortThreshold)"
-                )
-                return@withContext reply
+        
+        // Cancel any existing cooldown and pause screenshots for user chat
+        userChatCooldownJob?.cancel()
+        ScreenshotPauseController.requestPause(ctx, "ChatManager_UserChat")
+        Log.d(TAG, "🚫 Screenshots paused for user chat interaction")
+        
+        var timeoutJob: Job? = null
+        try {
+            // Start timeout timer
+            timeoutJob = scope.launch {
+                delay(USER_CHAT_TIMEOUT_MS)
+                Log.w(TAG, "⏱️ User chat timeout reached (${USER_CHAT_TIMEOUT_MS}ms), forcing resume")
+                ScreenshotPauseController.requestResume(ctx, "ChatManager_UserChat")
             }
+            
+            addUserMessage(ctx, text)
+            val reply = sendChatRequest(ctx, text, isUserInitiated = true)
+            
+            // Cancel timeout if we got response
+            timeoutJob.cancel()
+            
+            if (!reply.isNullOrBlank()) {
+                // Check decision_score threshold
+                val decisionScore = extractDecisionScore(reply)
+                val prefs = PrefsHelper(ctx)
+                val shortThreshold = prefs.getShortResponseThreshold()
+                if (decisionScore != null && decisionScore < shortThreshold) {
+                    Log.d(
+                        TAG,
+                        "Response skipped: decision_score ($decisionScore) below threshold ($shortThreshold)"
+                    )
+                    return@withContext reply
+                }
 
-            if (shouldStoreAssistantReply(reply)) {
-                // Save the FULL JSON response to history, not just the response field
-                addAssistantMessage(ctx, reply)
-                Log.d(TAG, "Assistant reply saved to history (full JSON)")
-            } else {
-                Log.d(TAG, "Assistant reply not stored per structured flags")
+                if (shouldStoreAssistantReply(reply, shortThreshold)) {
+                    // Save the FULL JSON response to history, not just the response field
+                    addAssistantMessage(ctx, reply)
+                    Log.d(TAG, "Assistant reply saved to history (full JSON)")
+                } else {
+                    Log.d(TAG, "Assistant reply not stored per structured flags")
+                }
+
+                // Enqueue reply for in-app dialogue display
+                try {
+                    val entries = parseReplyToEntries(reply)
+                    if (entries.isNotEmpty()) DialogueQueue.enqueue(entries)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to enqueue dialogue entries", e)
+                }
             }
-
-            // Enqueue reply for in-app dialogue display
-            try {
-                val entries = parseReplyToEntries(reply)
-                if (entries.isNotEmpty()) DialogueQueue.enqueue(entries)
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to enqueue dialogue entries", e)
+            
+            return@withContext reply
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in sendUserMessage", e)
+            timeoutJob?.cancel()
+            // Force resume on error
+            ScreenshotPauseController.requestResume(ctx, "ChatManager_UserChat")
+            return@withContext null
+        } finally {
+            // Start cooldown period - screenshots stay paused for additional time
+            userChatCooldownJob = scope.launch {
+                try {
+                    Log.d(TAG, "⏳ Starting user chat cooldown (${USER_CHAT_COOLDOWN_MS}ms)")
+                    delay(USER_CHAT_COOLDOWN_MS)
+                    ScreenshotPauseController.requestResume(ctx, "ChatManager_UserChat")
+                    Log.d(TAG, "✅ User chat cooldown complete, screenshots resumed")
+                } catch (e: CancellationException) {
+                    // Cooldown was cancelled by another user message - that's fine
+                    Log.d(TAG, "⚠️ User chat cooldown cancelled (new message sent)")
+                }
             }
         }
-        return@withContext reply
     }
 
     // Build and send chat request: includes system prompt + memories + history
-    private fun sendChatRequest(ctx: Context, latestUserText: String): String? {
+    private fun sendChatRequest(ctx: Context, latestUserText: String, isUserInitiated: Boolean): String? {
         if (running.get()) {
             Log.w(TAG, "sendChatRequest skipped: another chat request running")
             return null
         }
         running.set(true)
 
-        // Pause screenshots before making API request
-        ScreenshotPauseController.requestPause(ctx, "ChatManager")
+        // Pause screenshots ONLY for developer/analyzer messages (user chat handles its own pausing)
+        if (!isUserInitiated) {
+            ScreenshotPauseController.requestPause(ctx, "ChatManager_Developer")
+        }
 
         try {
             val prefs = PrefsHelper(ctx)
@@ -502,7 +542,7 @@ Always include intent_category in your response for tracking purposes.
             val recentIntents = EnhancedMemoryManager.getRecentIntents(ctx, 5)
             val condensedMemories = EnhancedMemoryManager.getRecentCondensedMemorySummary(ctx, 3)
 
-            // Build memory text with enhanced context (now for developer message, not system)
+            // Build memory text with enhanced context
             val memList = MemoryManager.getAll(ctx)
             val memTextBuilder = StringBuilder()
             val currentTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
@@ -541,24 +581,19 @@ Always include intent_category in your response for tracking purposes.
 
             val memoryText = memTextBuilder.toString().take(25_000)
 
-            // Build request JSON similar to Responses API used elsewhere
-            val inputArray = JSONArray()
+            // Build Mistral Chat Completions format
+            val messagesArray = JSONArray()
 
             // System message - only the prompt, no memories/timeline
-            val systemObj = JSONObject()
-            systemObj.put("role", "system")
-            val sysContent = JSONArray()
-            val sysText = JSONObject()
-            sysText.put("type", "input_text")
-            sysText.put("text", combinedPrompt)
-            sysContent.put(sysText)
-            systemObj.put("content", sysContent)
-            inputArray.put(systemObj)
+            val systemMsg = JSONObject()
+            systemMsg.put("role", "system")
+            systemMsg.put("content", combinedPrompt)
+            messagesArray.put(systemMsg)
 
-            // Append chat history as input entries (user/assistant/developer) with truncation
+            // Append chat history as messages (user/assistant/developer) with truncation
             val histSnapshot = getHistorySnapshot()
 
-            // Filter to get only last N developer messages (default 3)
+            // Filter to get only last N developer messages (default 2)
             val maxDeveloperMessages = 2
             val developerMessages = histSnapshot.filter { it.role == "developer" }.takeLast(maxDeveloperMessages)
             val nonDeveloperMessages = histSnapshot.filter { it.role != "developer" }
@@ -567,67 +602,47 @@ Always include intent_category in your response for tracking purposes.
             for (m in nonDeveloperMessages) {
                 val msgObj = JSONObject()
                 msgObj.put("role", m.role)
-                val content = JSONArray()
-                val textObj = JSONObject()
-                textObj.put("type", if (m.role == "assistant") "output_text" else "input_text")
 
                 // Truncate the text to 20 characters with "(truncated)" suffix
                 val truncatedText = truncateJsonFields(m.text, 20)
-                textObj.put("text", truncatedText)
-
-                content.put(textObj)
-                msgObj.put("content", content)
-                inputArray.put(msgObj)
+                msgObj.put("content", truncatedText)
+                messagesArray.put(msgObj)
             }
 
             // Process developer messages (last N only) with truncation
+            // Map "developer" role to "user" for Mistral API compatibility
             for (m in developerMessages) {
                 val msgObj = JSONObject()
-                msgObj.put("role", "developer")
-                val content = JSONArray()
-                val textObj = JSONObject()
-                textObj.put("type", "input_text")
+                msgObj.put("role", "user")  // Mistral doesn't support "developer" role
 
                 // Truncate the developer message
                 val truncatedText = truncateJsonFields(m.text, 20)
-                textObj.put("text", truncatedText)
-
-                content.put(textObj)
-                msgObj.put("content", content)
-                inputArray.put(msgObj)
+                val prefixedText = "[DEVELOPER CONTEXT]\n$truncatedText"
+                msgObj.put("content", prefixedText)
+                messagesArray.put(msgObj)
             }
 
-            // Add a fresh developer message with memories and timeline (not truncated, this is current context)
+            // Add a fresh user message with memories and timeline (not truncated, this is current context)
             if (memoryText.isNotBlank()) {
-                val devContextObj = JSONObject()
-                devContextObj.put("role", "developer")
-                val devContent = JSONArray()
-                val devTextObj = JSONObject()
-                devTextObj.put("type", "input_text")
-                devTextObj.put("text", memoryText)
-                devContent.put(devTextObj)
-                devContextObj.put("content", devContent)
-                inputArray.put(devContextObj)
+                val memContextMsg = JSONObject()
+                memContextMsg.put("role", "user")
+                memContextMsg.put("content", "[MEMORY CONTEXT]\n$memoryText")
+                messagesArray.put(memContextMsg)
             }
 
             // Append the latest user message (in case not yet in history) - NOT truncated
-            val userObj = JSONObject()
-            userObj.put("role", "developer")
-            val userContent = JSONArray()
-            val userTextObj = JSONObject()
-            userTextObj.put("type", "input_text")
-            userTextObj.put("text", latestUserText)
-            userContent.put(userTextObj)
-            userObj.put("content", userContent)
-            inputArray.put(userObj)
+            val userMsg = JSONObject()
+            userMsg.put("role", "user")
+            userMsg.put("content", "[DEVELOPER CONTEXT]\n$latestUserText")
+            messagesArray.put(userMsg)
 
             val requestJson = JSONObject()
-            requestJson.put("model", "gpt-4.1-mini")
+            requestJson.put("model", "mistral-medium-latest")  // Mistral's medium model for reasoning
             requestJson.put("temperature", 0.9)
             requestJson.put("top_p", 0.9)
-            requestJson.put("input", inputArray)
+            requestJson.put("messages", messagesArray)
 
-            Log.d(TAG, "OpenAI Chat requestJson = $requestJson")
+            Log.d(TAG, "Mistral Chat requestJson = $requestJson")
 
             val payload = requestJson.toString().toByteArray(Charsets.UTF_8)
             val requestJsonString = requestJson.toString()
@@ -652,61 +667,39 @@ Always include intent_category in your response for tracking purposes.
                 Log.d(TAG, "Chat model response code=$code, body=${respText.take(2000)}")
 
                 if (respText.isNotBlank()) {
-                    // Try to extract output_text or output->content->output_text
+                    // Parse Mistral Chat Completions response format
                     val json = JSONObject(respText)
-                    if (json.has("output_text")) {
-                        val result = json.getString("output_text").trim()
-                        // Extract and store intent_category for anti-repetition tracking
-                        extractAndStoreIntent(ctx, result)
+                    if (json.has("choices")) {
+                        val choicesArr = json.getJSONArray("choices")
+                        if (choicesArr.length() > 0) {
+                            val firstChoice = choicesArr.getJSONObject(0)
+                            if (firstChoice.has("message")) {
+                                val message = firstChoice.getJSONObject("message")
+                                val rawResult = message.optString("content", "").trim()
 
-                        // Extract token usage if present
-                        val usageObj = json.optJSONObject("usage")
-                        val promptTokens = usageObj?.optInt("prompt_tokens", -1)?.takeIf { it >= 0 }
-                        val completionTokens = usageObj?.optInt("completion_tokens", -1)?.takeIf { it >= 0 }
-                        val totalTokens = usageObj?.optInt("total_tokens", -1)?.takeIf { it >= 0 }
+                                if (rawResult.isNotEmpty()) {
+                                    // Strip markdown code blocks before processing
+                                    val result = stripMarkdownCodeBlocks(rawResult)
+                                    
+                                    // Extract and store intent_category for anti-repetition tracking
+                                    extractAndStoreIntent(ctx, result)
 
-                        // Log the request and response with token info when available
-                        if (promptTokens != null || completionTokens != null || totalTokens != null) {
-                            ResponseLogger.logResponse(ctx, requestJsonString, result, ResponseLogger.LogType.CHAT_MANAGER,
-                                promptTokens, completionTokens, totalTokens)
-                        } else {
-                            ResponseLogger.logResponse(ctx, requestJsonString, result)
-                        }
-                        return result
-                    } else if (json.has("output")) {
-                        val outArr = json.getJSONArray("output")
-                        val sb = StringBuilder()
-                        for (i in 0 until outArr.length()) {
-                            val outObj = outArr.getJSONObject(i)
-                            if (outObj.has("content")) {
-                                val contentArr = outObj.getJSONArray("content")
-                                for (j in 0 until contentArr.length()) {
-                                    val c = contentArr.getJSONObject(j)
-                                    if (c.optString("type") == "output_text" && c.has("text")) {
-                                        sb.append(c.getString("text"))
-                                        sb.append('\n')
+                                    // Extract token usage from Mistral response
+                                    val usageObj = json.optJSONObject("usage")
+                                    val promptTokens = usageObj?.optInt("prompt_tokens", -1)?.takeIf { it >= 0 }
+                                    val completionTokens = usageObj?.optInt("completion_tokens", -1)?.takeIf { it >= 0 }
+                                    val totalTokens = usageObj?.optInt("total_tokens", -1)?.takeIf { it >= 0 }
+
+                                    // Log the request and response with token info when available
+                                    if (promptTokens != null || completionTokens != null || totalTokens != null) {
+                                        ResponseLogger.logResponse(ctx, requestJsonString, result, ResponseLogger.LogType.CHAT_MANAGER,
+                                            promptTokens, completionTokens, totalTokens)
+                                    } else {
+                                        ResponseLogger.logResponse(ctx, requestJsonString, result)
                                     }
+                                    return result
                                 }
                             }
-                        }
-                        val result = sb.toString().trim()
-                        if (result.isNotEmpty()) {
-                            // Extract and store intent_category for anti-repetition tracking
-                            extractAndStoreIntent(ctx, result)
-
-                            // Token usage may be at top-level 'usage' or possibly inside the response payload
-                            val usageObj = json.optJSONObject("usage")
-                            val promptTokens = usageObj?.optInt("prompt_tokens", -1)?.takeIf { it >= 0 }
-                            val completionTokens = usageObj?.optInt("completion_tokens", -1)?.takeIf { it >= 0 }
-                            val totalTokens = usageObj?.optInt("total_tokens", -1)?.takeIf { it >= 0 }
-
-                            if (promptTokens != null || completionTokens != null || totalTokens != null) {
-                                ResponseLogger.logResponse(ctx, requestJsonString, result, ResponseLogger.LogType.CHAT_MANAGER,
-                                    promptTokens, completionTokens, totalTokens)
-                            } else {
-                                ResponseLogger.logResponse(ctx, requestJsonString, result)
-                            }
-                            return result
                         }
                     }
                 }
@@ -720,8 +713,11 @@ Always include intent_category in your response for tracking purposes.
             }
         } finally {
             running.set(false)
-            // Resume screenshots after API request completes (success or failure)
-            ScreenshotPauseController.requestResume(ctx, "ChatManager")
+            // Resume screenshots ONLY for developer/analyzer messages
+            // User chat manages its own resume with cooldown
+            if (!isUserInitiated) {
+                ScreenshotPauseController.requestResume(ctx, "ChatManager_Developer")
+            }
         }
         return null
     }
@@ -940,5 +936,27 @@ Always include intent_category in your response for tracking purposes.
             buffer.write(data, 0, n)
         }
         return buffer.toByteArray()
+    }
+
+    /**
+     * Strip markdown code blocks from JSON response
+     * Handles formats like: ```json\n{...}\n``` or ```\n{...}\n```
+     */
+    private fun stripMarkdownCodeBlocks(text: String): String {
+        var cleaned = text.trim()
+
+        // Remove opening code block markers (```json or ```)
+        if (cleaned.startsWith("```json")) {
+            cleaned = cleaned.removePrefix("```json").trim()
+        } else if (cleaned.startsWith("```")) {
+            cleaned = cleaned.removePrefix("```").trim()
+        }
+
+        // Remove closing code block marker
+        if (cleaned.endsWith("```")) {
+            cleaned = cleaned.removeSuffix("```").trim()
+        }
+
+        return cleaned
     }
 }

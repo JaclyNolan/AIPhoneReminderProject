@@ -26,45 +26,45 @@ object AnalyzerAgent {
     private val flushing = AtomicBoolean(false)
 
     private const val ANALYZER_SYSTEM_PROMPT = """
-You are the Screenshot Analyzer. For each batch of screenshots return:
-- frames[] minimal inference
-- batch_summary {scene_type, dominant_activity, repeat_count, velocity, micro_emotion_shift, confidence}
-- screen_description {summary_text, keywords[], topic_inferred, confidence}
-  + This field should:
-++ Be 1–3 sentences, human-readable.
-++ Combine visual + text + behavioral data.
-++ Include tone or inferred mood if possible.
+You are the Screenshot Analyzer. Analyze 3 consecutive screenshots and extract maximum context with minimal output tokens.
 
-- short justification (<= 18 words)
-- safety_flags {suicidal, selfharm, nsfw}
-Do not include base64 or raw image data in outputs. Be concise except for the .
+CRITICAL RULES:
+1. Return ONLY valid JSON (no markdown, no extra text)
+2. Use EXACT field names and structure below
+3. Compress text: use short phrases, skip articles/connectors
+4. Report raw confidence (0.0-1.0), not percentage
 
-Return JSON ONLY in this exact format:
+CONTEXT EXTRACTION:
+- Compare frame transitions to detect: scrolling, typing, reading, switching apps, idle
+- Infer user mood/state from: activity type, pace, content consumed
+- Identify app + primary activity + velocity
+
+OUTPUT FORMAT (strip all markdown before JSON):
 {
   "tick_id": "t_YYYYMMDD_HHMMSS",
-  "timestamp": "ISO8601 timestamp",
-  "frames": [
-    {"id":1,"scene_type":"string","primary_activity":"string","activity_conf":0.0-1.0,"text_snips":["..."]},
-    {"id":2,"scene_type":"string","primary_activity":"string","activity_conf":0.0-1.0,"text_snips":["..."]},
-    {"id":3,"scene_type":"string","primary_activity":"string","activity_conf":0.0-1.0,"text_snips":["..."]}
-  ],
-  "batch_summary":{
-    "scene_type":"string",
-    "dominant_activity":"string",
-    "repeat_count":1-3,
-    "velocity":"slow/medium/fast",
-    "micro_emotion_shift":"neutral/positive/negative/mixed",
-    "confidence":0.0-1.0
+  "ts": "ISO8601",
+  "batch": {
+    "scene": "app_name",
+    "activity": "scrolling|typing|reading|idle|switching",
+    "confidence": 0.0-1.0,
+    "velocity": "slow|medium|fast",
+    "mood": "neutral|positive|negative|mixed"
   },
-  "screen_description": {
-    "summary_text": "User scrolls quickly through a text-based social feed, glancing at short posts and memes. Their face looks calm but somewhat disengaged.",
-    "keywords": ["scrolling", "social", "neutral mood", "habitual"],
-    "topic_inferred": "idle social browsing",
-    "confidence": 0.88
-  },
-  "safety_flags":{"suicidal":0.0-1.0,"selfharm":0.0-1.0,"nsfw":0.0-1.0},
-  "justification":"string (short reason)"
+  "context": {
+    "summary": "1-2 sentence description of what user is doing across all 3 screenshots",
+    "confidence": 0.0-1.0
+  }
 }
+
+EXAMPLES:
+Frame 1-3: Gmail inbox scrolling then reading email
+→ {"tick_id":"t_20251028_143022", "ts":"2025-10-28T14:30:22Z", "batch":{"scene":"Gmail","activity":"reading","confidence":0.95,"velocity":"slow","mood":"neutral"}, "context":{"summary":"User browsing work emails, opened message about project deadline","confidence":0.9}}
+
+Frame 1-3: TikTok feed, rapid swiping
+→ {"tick_id":"t_20251028_143025", "ts":"2025-10-28T14:30:25Z", "batch":{"scene":"TikTok","activity":"scrolling","confidence":0.92,"velocity":"fast","mood":"mixed"}, "context":{"summary":"User rapidly scrolling through entertainment videos, spending 2-3 seconds per video","confidence":0.88}}
+
+Frame 1-3: Settings menu, navigating WiFi
+→ {"tick_id":"t_20251028_143028", "ts":"2025-10-28T14:30:28Z", "batch":{"scene":"Settings","activity":"switching","confidence":0.87,"velocity":"medium","mood":"neutral"}, "context":{"summary":"User troubleshooting network connection in WiFi settings","confidence":0.85}}
 """
 
     fun enqueueImageBytes(ctx: Context, imageBytes: ByteArray) {
@@ -142,41 +142,52 @@ Return JSON ONLY in this exact format:
             }
             val contextText = contextBuilder.toString().take(8000)
 
-            val inputArray = JSONArray()
-            val systemObj = JSONObject()
-            systemObj.put("role", "system")
-            val sysContent = JSONArray()
-            val sysText = JSONObject()
-            sysText.put("type", "input_text")
-            sysText.put("text", ANALYZER_SYSTEM_PROMPT)
-            sysContent.put(sysText)
+            // Build Mistral Chat Completions format
+            val messagesArray = JSONArray()
 
+            // System message with prompt and context
+            val systemContent = StringBuilder()
+            systemContent.append(ANALYZER_SYSTEM_PROMPT)
             if (contextText.isNotBlank()) {
-                val ctxObj = JSONObject()
-                ctxObj.put("type", "input_text")
-                ctxObj.put("text", contextText)
-                sysContent.put(ctxObj)
+                systemContent.append("\n\n")
+                systemContent.append(contextText)
             }
-            systemObj.put("content", sysContent)
-            inputArray.put(systemObj)
 
+            val systemMsg = JSONObject()
+            systemMsg.put("role", "system")
+            systemMsg.put("content", systemContent.toString())
+            messagesArray.put(systemMsg)
+
+            // User message with images
+            val userMsg = JSONObject()
+            userMsg.put("role", "user")
+
+            val contentArray = JSONArray()
+
+            // Add text instruction
+            val textContent = JSONObject()
+            textContent.put("type", "text")
+            textContent.put("text", "Analyze these ${imageByteList.size} screenshots and return the structured JSON response.")
+            contentArray.put(textContent)
+
+            // Add images
             for (bytes in imageByteList) {
-                val inputObj = JSONObject()
-                inputObj.put("role", "user")
-                val contentArray = JSONArray()
                 val base64Image = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                val imageObj = JSONObject()
-                imageObj.put("type", "input_image")
-                imageObj.put("image_url", "data:image/jpeg;base64,$base64Image")
-                contentArray.put(imageObj)
-                inputObj.put("content", contentArray)
-                inputArray.put(inputObj)
+                val imageContent = JSONObject()
+                imageContent.put("type", "image_url")
+                val imageUrl = JSONObject()
+                imageUrl.put("url", "data:image/jpeg;base64,$base64Image")
+                imageContent.put("image_url", imageUrl)
+                contentArray.put(imageContent)
             }
+
+            userMsg.put("content", contentArray)
+            messagesArray.put(userMsg)
 
             val requestJson = JSONObject()
-            requestJson.put("model", "gpt-4.1-mini")
+            requestJson.put("model", "mistral-small-latest")  // Mistral's small model for vision analysis
             requestJson.put("temperature", 0.6)
-            requestJson.put("input", inputArray)
+            requestJson.put("messages", messagesArray)
 
             val payload = requestJson.toString().toByteArray(Charsets.UTF_8)
             val requestJsonString = requestJson.toString()
@@ -202,29 +213,26 @@ Return JSON ONLY in this exact format:
                 val json = JSONObject(respText)
                 var structured: JSONObject? = null
 
-                if (json.has("output_text")) {
-                    structured = JSONObject(json.getString("output_text"))
-                } else if (json.has("output")) {
-                    val outputArr = json.getJSONArray("output")
-                    for (i in 0 until outputArr.length()) {
-                        val outObj = outputArr.getJSONObject(i)
-                        if (outObj.has("content")) {
-                            val contentArr = outObj.getJSONArray("content")
-                            for (j in 0 until contentArr.length()) {
-                                val c = contentArr.getJSONObject(j)
-                                if (c.optString("type") == "output_text" && c.has("text")) {
-                                    structured = JSONObject(c.getString("text"))
-                                    break
-                                }
+                // Parse Mistral Chat Completions response format
+                if (json.has("choices")) {
+                    val choicesArr = json.getJSONArray("choices")
+                    if (choicesArr.length() > 0) {
+                        val firstChoice = choicesArr.getJSONObject(0)
+                        if (firstChoice.has("message")) {
+                            val message = firstChoice.getJSONObject("message")
+                            val content = message.optString("content", "")
+                            if (content.isNotBlank()) {
+                                // Strip markdown code blocks before parsing JSON
+                                val cleanedContent = stripMarkdownCodeBlocks(content)
+                                structured = JSONObject(cleanedContent)
                             }
                         }
-                        if (structured != null) break
                     }
                 }
 
                 if (structured != null) {
                     // Log the request and response to ResponseLogger
-                    // Try to extract usage/token info from top-level response JSON (if provider includes it)
+                    // Extract token usage from Mistral response
                     val usageObj = json.optJSONObject("usage")
                     val promptTokens = usageObj?.optInt("prompt_tokens", -1)?.takeIf { it >= 0 }
                     val completionTokens = usageObj?.optInt("completion_tokens", -1)?.takeIf { it >= 0 }
@@ -254,44 +262,29 @@ Return JSON ONLY in this exact format:
     private fun processAnalyzerResponse(ctx: Context, response: JSONObject) {
         try {
             val tickId = response.optString("tick_id", "")
-            val timestamp = response.optString("timestamp", "")
-            val batchSummary = response.optJSONObject("batch_summary")
-            val safetyFlags = response.optJSONObject("safety_flags")
-            val justification = response.optString("justification", "")
+            val ts = response.optString("ts", "")
+            val batch = response.optJSONObject("batch")
+            val context = response.optJSONObject("context")
 
-            Log.d(TAG, "Analyzer result: tickId=$tickId, justification=$justification")
+            Log.d(TAG, "Analyzer result: tickId=$tickId")
 
-            if (batchSummary != null) {
-                val sceneType = batchSummary.optString("scene_type", "unknown")
-                val dominantActivity = batchSummary.optString("dominant_activity", "unknown")
-                val confidence = batchSummary.optDouble("confidence", 0.5)
+            if (batch != null) {
+                val scene = batch.optString("scene", "unknown")
+                val activity = batch.optString("activity", "unknown")
+                val confidence = batch.optDouble("confidence", 0.5)
+                val contextSummary = context?.optString("summary", "") ?: ""
 
-                // Relevance gate check (simplified)
-                val relevanceScore = confidence * 0.7 + 0.3 // Simple formula
+                // Relevance gate check
+                val relevanceScore = confidence * 0.7 + 0.3
                 if (relevanceScore >= 0.4) {
-                    // Add to SceneTimeline
+                    // Add to SceneTimeline with context summary
                     val sceneEntry = EnhancedMemoryManager.SceneTimelineEntry(
-                        timestamp = timestamp.ifEmpty { SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).format(Date()) },
-                        sceneLabel = sceneType,
-                        shortText = "$dominantActivity (${batchSummary.optInt("repeat_count", 1)} frames)",
+                        timestamp = ts.ifEmpty { SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).format(Date()) },
+                        sceneLabel = scene,
+                        shortText = if (contextSummary.isNotBlank()) contextSummary else "$activity",
                         confidence = confidence
                     )
                     EnhancedMemoryManager.addSceneTimelineEntry(ctx, sceneEntry)
-
-                    // Check safety flags
-                    if (safetyFlags != null) {
-                        val suicidalScore = safetyFlags.optDouble("suicidal", 0.0)
-                        val selfharmScore = safetyFlags.optDouble("selfharm", 0.0)
-                        if (suicidalScore > 0.5 || selfharmScore > 0.5) {
-                            Log.w(TAG, "Safety flag triggered: suicidal=$suicidalScore, selfharm=$selfharmScore")
-                            // Store high-priority safety concern
-                            EnhancedMemoryManager.addCondensedMemoryEntry(ctx,
-                                "SAFETY: detected concerning content (${if (suicidalScore > 0.5) "suicidal" else "selfharm"})",
-                                confidence = 0.95,
-                                source = "analyzer_safety"
-                            )
-                        }
-                    }
 
                     // Build developer payload and send to Ralsei
                     buildAndSendDeveloperPayload(ctx, response)
@@ -312,8 +305,8 @@ Return JSON ONLY in this exact format:
 
             val devPayload = JSONObject()
             devPayload.put("tick_id", analyzerResponse.optString("tick_id", ""))
-            devPayload.put("batch_summary", analyzerResponse.optJSONObject("batch_summary"))
-            devPayload.put("frames_sample", analyzerResponse.optJSONArray("frames"))
+            devPayload.put("batch", analyzerResponse.optJSONObject("batch"))
+            devPayload.put("context", analyzerResponse.optJSONObject("context"))
 
             val recentMemArray = JSONArray()
             for (line in condensedMemories.split("\n").take(3)) {
@@ -367,5 +360,27 @@ Return JSON ONLY in this exact format:
             buffer.write(data, 0, n)
         }
         return buffer.toByteArray()
+    }
+
+    /**
+     * Strip markdown code blocks from JSON response
+     * Handles formats like: ```json\n{...}\n``` or ```\n{...}\n```
+     */
+    private fun stripMarkdownCodeBlocks(text: String): String {
+        var cleaned = text.trim()
+
+        // Remove opening code block markers (```json or ```)
+        if (cleaned.startsWith("```json")) {
+            cleaned = cleaned.removePrefix("```json").trim()
+        } else if (cleaned.startsWith("```")) {
+            cleaned = cleaned.removePrefix("```").trim()
+        }
+
+        // Remove closing code block marker
+        if (cleaned.endsWith("```")) {
+            cleaned = cleaned.removeSuffix("```").trim()
+        }
+
+        return cleaned
     }
 }

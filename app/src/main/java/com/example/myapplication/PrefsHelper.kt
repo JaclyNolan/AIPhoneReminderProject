@@ -32,7 +32,7 @@ class PrefsHelper(context: Context) {
     fun getOpenAIApiKey(): String? = prefs.getString("openai_api_key", null)
     fun setOpenAIApiKey(value: String) = prefs.edit { putString("openai_api_key", value) }
 
-    fun getOpenAIEndpoint(): String = prefs.getString("openai_endpoint", "https://api.openai.com/v1/responses") ?: "https://api.openai.com/v1/responses"
+    fun getOpenAIEndpoint(): String = prefs.getString("openai_endpoint", "https://api.mistral.ai/v1/chat/completions") ?: "https://api.mistral.ai/v1/chat/completions"
     fun setOpenAIEndpoint(value: String) = prefs.edit { putString("openai_endpoint", value) }
 
     // Custom OpenAI prompt for vision analysis (stored in prefs). If unset, EnvLoader or default will be used.
