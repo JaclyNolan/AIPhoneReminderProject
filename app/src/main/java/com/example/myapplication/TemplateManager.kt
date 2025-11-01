@@ -1,6 +1,7 @@
 package com.example.myapplication
 
 import kotlin.random.Random
+import com.example.myapplication.memory.EnhancedMemoryManager
 
 /**
  * TemplateManager: Manages template banks per intent with paraphrase mechanism

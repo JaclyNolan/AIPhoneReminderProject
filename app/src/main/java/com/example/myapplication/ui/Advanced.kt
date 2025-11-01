@@ -1,5 +1,6 @@
 package com.example.myapplication.ui
 
+import android.content.Intent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -7,7 +8,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.example.myapplication.testing.DebugActivity
 import java.util.Locale
 
 /**
@@ -34,6 +37,7 @@ fun AdvancedScreen(
     autoAdvance: Boolean,
     shortResponseThreshold: Float,
     longResponseThreshold: Float,
+    warningUrgencyThreshold: Int,
     onIntervalChange: (Long) -> Unit,
     onScaleChange: (Float) -> Unit,
     onQualityChange: (Int) -> Unit,
@@ -44,6 +48,7 @@ fun AdvancedScreen(
     onAutoAdvanceChange: (Boolean) -> Unit,
     onShortResponseThresholdChange: (Float) -> Unit,
     onLongResponseThresholdChange: (Float) -> Unit,
+    onWarningUrgencyThresholdChange: (Int) -> Unit,
     onClose: () -> Unit
 ) {
     val scrollState = rememberScrollState()
@@ -183,11 +188,11 @@ fun AdvancedScreen(
 
                 SliderSetting(
                     label = "Short response threshold: ${String.format(Locale.US, "%.2f", shortResponseThreshold)}",
-                    description = "Minimum score for Ralsei to respond (below = stay quiet)",
+                    description = "Minimum score for Ralsei to respond (lower = more chatty, higher = quieter)",
                     value = shortResponseThreshold,
                     onValueChange = onShortResponseThresholdChange,
-                    valueRange = 0.0f..1.0f,
-                    steps = 20
+                    valueRange = -1.0f..2.0f,
+                    steps = 60
                 )
 
                 SliderSetting(
@@ -195,8 +200,8 @@ fun AdvancedScreen(
                     description = "Score needed for medium-long responses (below = short response)",
                     value = longResponseThreshold,
                     onValueChange = onLongResponseThresholdChange,
-                    valueRange = 0.0f..1.0f,
-                    steps = 20
+                    valueRange = -1.0f..2.0f,
+                    steps = 60
                 )
 
                 Card(
@@ -224,6 +229,84 @@ fun AdvancedScreen(
                             color = MaterialTheme.colorScheme.onTertiaryContainer
                         )
                     }
+                }
+            }
+            
+            // Warning System Settings Section
+            SettingsSection(title = "Warning System") {
+                Text(
+                    text = "Control when pattern violations trigger warnings",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                SliderSetting(
+                    label = "Warning urgency threshold: $warningUrgencyThreshold",
+                    description = "Minimum urgency (0-10) to trigger warnings. Lower values = more sensitive.",
+                    value = warningUrgencyThreshold.toFloat(),
+                    onValueChange = { onWarningUrgencyThresholdChange(it.toInt()) },
+                    valueRange = 0f..10f,
+                    steps = 10
+                )
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            text = "ℹ️ Warning Levels",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "• 0-3: No warning\n" +
+                                   "• 4-6: Dialogue bubble (high priority)\n" +
+                                   "• 7-10: Soft intervention overlay\n" +
+                                   "• Current threshold: $warningUrgencyThreshold (warnings at ${warningUrgencyThreshold}+)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                }
+                
+                // Permissions Button
+                Spacer(modifier = Modifier.height(8.dp))
+                val context = LocalContext.current
+                Button(
+                    onClick = {
+                        val intent = Intent(context, com.example.myapplication.PermissionsActivity::class.java)
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Text("🔒 View Permissions")
+                }
+                
+                // Debug Testing Button
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        val intent = Intent(context, DebugActivity::class.java)
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.tertiary
+                    )
+                ) {
+                    Text("🧪 Open Debug Screen")
                 }
             }
             

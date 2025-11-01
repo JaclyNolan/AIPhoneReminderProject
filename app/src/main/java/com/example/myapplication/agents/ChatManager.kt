@@ -1,4 +1,4 @@
-package com.example.myapplication
+package com.example.myapplication.agents
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -15,6 +15,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import com.example.myapplication.ui.DialogueEntry
 import com.example.myapplication.ui.DialogueQueue
 import com.example.myapplication.ui.emotionToRelativePath
+import com.example.myapplication.PrefsHelper
+import com.example.myapplication.memory.EnhancedMemoryManager
+import com.example.myapplication.memory.MemoryManager
+import com.example.myapplication.EnvLoader
+import com.example.myapplication.ResponseLogger
+import com.example.myapplication.LLMClient
+import com.example.myapplication.ScreenshotPauseController
+import com.example.myapplication.SoftInterventionOverlay
 
 /**
  * ChatManager handles a chat-oriented model that can access memories and chat history.
@@ -81,37 +89,62 @@ You occasionally show excitement ("Wow, Kris!") and always try to teach or help.
 - ALWAYS perform MEMORY CONTEXT REASONING before responding.
 - Check recent_intents for similar intent within last 30 minutes and reduce DecisionScore accordingly.
 - If you've already responded with similar intent recently, prefer staying quiet or use micro_observe.
-- If decision_score < shortThreshold, set response to null (stay quiet).
-- If decision_score >= shortThreshold, provide appropriate response based on score range.
+- DO NOT use action descriptions like "*softly adjusts scarf*" or "*fidgets*" - use ONLY plain dialogue text.
+- Keep "reasons" fields concise and information-dense - no verbose explanations.
 
 CRITICAL: Return RAW JSON ONLY. DO NOT wrap in markdown code blocks (```json). DO NOT include any text before or after the JSON object.
+
+[RESPONSE TYPE LOGIC]
+After calculating decision_score, you MUST compare it with the thresholds to determine response_type.
+
+Threshold values for this session:
+- shortThreshold = $shortThreshold
+- longThreshold = $longThreshold
+
+CRITICAL: In the response_type field, you MUST write a natural language explanation using the ACTUAL decision_score value.
+
+Comparison logic with examples:
+1. If decision_score < $shortThreshold: response_type = "none", response = null
+   Example: If decision_score is -1.5 and shortThreshold is -1.0:
+   "Score -1.5 is below short threshold (-1.0): no response"
+
+2. If $shortThreshold ≤ decision_score < $longThreshold: response_type = "short", provide brief response
+   Example: If decision_score is 0.35, shortThreshold is -1.0, longThreshold is 0.71:
+   "Score 0.35 is above short threshold (-1.0), below long threshold (0.71): short response"
+
+3. If decision_score ≥ $longThreshold: response_type = "long", provide detailed response
+   Example: If decision_score is 0.85 and longThreshold is 0.71:
+   "Score 0.85 is above long threshold (0.71): long response"
+
+CRITICAL: Always write in plain English using the ACTUAL numeric value of your calculated decision_score!
 
 Return JSON in this exact format:
 {
   "calculation": {
     "user_activity_weight": {
         "score": "number",
-        "reasons": "string"
+        "reasons": "concise string"
     },
-    "emotional_resonance: {
+    "emotional_resonance": {
         "score": "number",
-        "reasons": "string"
+        "reasons": "concise string"
     },
-    "ralsei_activity_importance: {
+    "ralsei_activity_importance": {
         "score": "number"
     },
-    "repeat_penalty: {
+    "repeat_penalty": {
         "score": "number",
-        "reasons": "string"
+        "reasons": "concise string"
     },
-    "finial_calculation": "(UserActivityWeight × 0.5) + (EmotionalResonance × 0.4) − (RalseiActivityImportance × 0.2) + RepeatPenalty"
+    "final_calculation": "(UserActivityWeight × 0.7) + (EmotionalResonance × 0.6) − (RalseiActivityImportance × 0.2) + RepeatPenalty"
   },
+  "response_type": "Score [actual_value] is above/below [threshold_name] ([threshold_value]): [none/short/long] response",
   "decision_score": "number",
   "new_memory_entry": "string or null",
   "intent_category": "string (comfort/encouragement/curiosity/concern/observation/teaching/playful/companionship/micro_observe)",
   "response": [
-        { thinking: "string", text: "string", emotion: "surprise&worry"},
-        { thinking: "string", text: "string", emotion:  "worry"}
+        { "thinking": "string", "text": "string", "emotion": "surprise&worry"},
+        { "thinking": "string", "text": "string", "emotion": "worry"}
    ] or null
 }
 
@@ -197,8 +230,12 @@ Always include intent_category in your response for tracking purposes.
     }
 
     data class ChatMessage(
-        val role: String, val text: String, val timestamp: String =
-            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+        val role: String,
+        val text: String,
+        val timestamp: String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()),
+        val source: String = "commentary",  // "commentary", "warning", "user_chat"
+        val urgency: Int = 0,  // 0-10 scale (0 = normal, 10 = critical)
+        val characterId: String = "ralsei"  // Character identifier for multi-character support
     )
 
     private fun prefs(ctx: Context): SharedPreferences =
@@ -226,7 +263,11 @@ Always include intent_category in your response for tracking purposes.
                     "timestamp",
                     SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
                 )
-                history.add(ChatMessage(role, text, ts))
+                // Backward compatibility: use defaults if new fields are missing
+                val source = o.optString("source", "commentary")
+                val urgency = o.optInt("urgency", 0).coerceIn(0, 10)
+                val characterId = o.optString("characterId", "ralsei")
+                history.add(ChatMessage(role, text, ts, source, urgency, characterId))
             }
         } catch (_: Exception) {
         }
@@ -241,6 +282,9 @@ Always include intent_category in your response for tracking purposes.
                     o.put("role", m.role)
                     o.put("text", m.text)
                     o.put("timestamp", m.timestamp)
+                    o.put("source", m.source)
+                    o.put("urgency", m.urgency)
+                    o.put("characterId", m.characterId)
                     arr.put(o)
                 }
             }
@@ -348,19 +392,33 @@ Always include intent_category in your response for tracking purposes.
         return null
     }
 
-    fun addAssistantMessage(ctx: Context, text: String) {
-        synchronized(history) { history.add(ChatMessage("assistant", text)) }
+    fun addAssistantMessage(ctx: Context, text: String, source: String = "commentary", urgency: Int = 0, characterId: String = "ralsei") {
+        // Strip response_type field from JSON before saving to history (it's for debugging only)
+        val cleanedText = try {
+            val jsonObj = JSONObject(text.trim())
+            if (jsonObj.has("response_type")) {
+                jsonObj.remove("response_type")
+                jsonObj.toString()
+            } else {
+                text
+            }
+        } catch (e: Exception) {
+            // Not JSON or malformed - keep original
+            text
+        }
+        
+        synchronized(history) { history.add(ChatMessage("assistant", cleanedText, source = source, urgency = urgency, characterId = characterId)) }
         saveHistory(ctx)
     }
 
     fun addUserMessage(ctx: Context, text: String) {
-        synchronized(history) { history.add(ChatMessage("user", text)) }
+        synchronized(history) { history.add(ChatMessage("user", text, source = "user_chat")) }
         saveHistory(ctx)
     }
 
     // Add a developer message (role = "developer") so it can be filtered out of normal chat views
     fun addDeveloperMessage(ctx: Context, text: String) {
-        synchronized(history) { history.add(ChatMessage("developer", text)) }
+        synchronized(history) { history.add(ChatMessage("developer", text, source = "commentary")) }
         saveHistory(ctx)
     }
 
@@ -368,8 +426,11 @@ Always include intent_category in your response for tracking purposes.
     // This is used by AnalyzerAgent - does NOT pause screenshots (AnalyzerAgent handles its own pausing)
     fun handleDeveloperSuggestion(ctx: Context, suggestion: String) {
         initialize(ctx)
-        scope.launch {
-            try {
+        
+        // Check if high-urgency intervention is active - stay quiet during interventions
+        if (shouldCommentNow(ctx)) {
+            scope.launch {
+                try {
                 // Treat developer suggestion as a developer message (not a user message)
                 addDeveloperMessage(ctx, suggestion)
                 val reply = sendChatRequest(ctx, suggestion, isUserInitiated = false)
@@ -389,10 +450,8 @@ Always include intent_category in your response for tracking purposes.
                     // Only add assistant reply to history if appropriate per reply flags
                     if (shouldStoreAssistantReply(reply, shortThreshold)) {
                         // Save the FULL JSON response to history, not just the response field
-                        synchronized(history) {
-                            history.add(ChatMessage("assistant", reply))
-                        }
-                        saveHistory(ctx)
+                        // This is a commentary message (from developer suggestion), so use defaults
+                        addAssistantMessage(ctx, reply, source = "commentary", urgency = 0, characterId = "ralsei")
                         Log.d(TAG, "Chat assistant reply saved to history (full JSON)")
                     } else {
                         Log.d(
@@ -414,7 +473,48 @@ Always include intent_category in your response for tracking purposes.
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to handle developer suggestion", e)
             }
+            }
+        } else {
+            Log.d(TAG, "Skipping commentary: high-urgency intervention active or recent warning")
         }
+    }
+    
+    /**
+     * Check if commentary should proceed now, or if we should stay quiet due to interventions
+     * Returns false if:
+     * - SoftInterventionOverlay is currently showing
+     * - Recent high-urgency warning (within last 2 minutes)
+     */
+    private fun shouldCommentNow(ctx: Context): Boolean {
+        // Check if overlay is showing
+        if (SoftInterventionOverlay.isShowing()) {
+            Log.d(TAG, "Commentary suppressed: SoftInterventionOverlay is showing")
+            return false
+        }
+        
+        // Check for recent high-urgency warnings (within last 2 minutes)
+        val now = System.currentTimeMillis()
+        val twoMinutesAgo = now - (2 * 60 * 1000)
+        
+        synchronized(history) {
+            val recentWarnings = history.filter { msg ->
+                msg.source == "warning" &&
+                msg.urgency >= 7 &&
+                try {
+                    val msgTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(msg.timestamp)?.time
+                    msgTime != null && msgTime >= twoMinutesAgo
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            
+            if (recentWarnings.isNotEmpty()) {
+                Log.d(TAG, "Commentary suppressed: Recent high-urgency warning (${recentWarnings.size} warnings in last 2 min)")
+                return false
+            }
+        }
+        
+        return true
     }
 
     // Public API to send a user message and get assistant reply
@@ -636,80 +736,48 @@ Always include intent_category in your response for tracking purposes.
             userMsg.put("content", "[DEVELOPER CONTEXT]\n$latestUserText")
             messagesArray.put(userMsg)
 
+            // Convert JSONArray messages to LLMClient.Message list
+            val llmMessages = mutableListOf<LLMClient.Message>()
+            for (i in 0 until messagesArray.length()) {
+                val msgObj = messagesArray.getJSONObject(i)
+                val role = msgObj.optString("role", "user")
+                val content = msgObj.optString("content", "")
+                llmMessages.add(LLMClient.Message(role, content))
+            }
+
+            // Build request JSON string for logging
             val requestJson = JSONObject()
-            requestJson.put("model", "mistral-medium-latest")  // Mistral's medium model for reasoning
+            requestJson.put("model", "mistral-medium-latest")
             requestJson.put("temperature", 0.9)
             requestJson.put("top_p", 0.9)
             requestJson.put("messages", messagesArray)
-
-            Log.d(TAG, "Mistral Chat requestJson = $requestJson")
-
-            val payload = requestJson.toString().toByteArray(Charsets.UTF_8)
             val requestJsonString = requestJson.toString()
 
-            var connection: HttpURLConnection? = null
-            try {
-                val url = URL(endpoint)
-                connection = (url.openConnection() as HttpURLConnection).apply {
-                    doOutput = true
-                    requestMethod = "POST"
-                    setRequestProperty("Authorization", "Bearer $apiKey")
-                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    connectTimeout = 60_000
-                    readTimeout = 60_000
+            Log.d(TAG, "Calling LLM via LLMClient: ${llmMessages.size} messages")
+
+            // Call LLM using shared client
+            val response = LLMClient.callOpenAI(
+                ctx,
+                llmMessages,
+                model = "mistral-medium-latest",
+                temperature = 0.9,
+                topP = 0.9
+            )
+
+            if (response != null && response.content.isNotBlank()) {
+                val result = response.content
+                
+                // Extract and store intent_category for anti-repetition tracking
+                extractAndStoreIntent(ctx, result)
+
+                // Log the request and response with token info
+                if (response.promptTokens != null || response.completionTokens != null || response.totalTokens != null) {
+                    ResponseLogger.logResponse(ctx, requestJsonString, result, ResponseLogger.LogType.CHAT_MANAGER,
+                        response.promptTokens, response.completionTokens, response.totalTokens)
+                } else {
+                    ResponseLogger.logResponse(ctx, requestJsonString, result)
                 }
-                connection.outputStream.use { it.write(payload) }
-                val code = connection.responseCode
-                val respStream =
-                    if (code in 200..299) connection.inputStream else connection.errorStream
-                val respBytes = respStream?.use { readAllBytes(it) }
-                val respText = respBytes?.let { String(it) } ?: ""
-                Log.d(TAG, "Chat model response code=$code, body=${respText.take(2000)}")
-
-                if (respText.isNotBlank()) {
-                    // Parse Mistral Chat Completions response format
-                    val json = JSONObject(respText)
-                    if (json.has("choices")) {
-                        val choicesArr = json.getJSONArray("choices")
-                        if (choicesArr.length() > 0) {
-                            val firstChoice = choicesArr.getJSONObject(0)
-                            if (firstChoice.has("message")) {
-                                val message = firstChoice.getJSONObject("message")
-                                val rawResult = message.optString("content", "").trim()
-
-                                if (rawResult.isNotEmpty()) {
-                                    // Strip markdown code blocks before processing
-                                    val result = stripMarkdownCodeBlocks(rawResult)
-                                    
-                                    // Extract and store intent_category for anti-repetition tracking
-                                    extractAndStoreIntent(ctx, result)
-
-                                    // Extract token usage from Mistral response
-                                    val usageObj = json.optJSONObject("usage")
-                                    val promptTokens = usageObj?.optInt("prompt_tokens", -1)?.takeIf { it >= 0 }
-                                    val completionTokens = usageObj?.optInt("completion_tokens", -1)?.takeIf { it >= 0 }
-                                    val totalTokens = usageObj?.optInt("total_tokens", -1)?.takeIf { it >= 0 }
-
-                                    // Log the request and response with token info when available
-                                    if (promptTokens != null || completionTokens != null || totalTokens != null) {
-                                        ResponseLogger.logResponse(ctx, requestJsonString, result, ResponseLogger.LogType.CHAT_MANAGER,
-                                            promptTokens, completionTokens, totalTokens)
-                                    } else {
-                                        ResponseLogger.logResponse(ctx, requestJsonString, result)
-                                    }
-                                    return result
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending chat request", e)
-            } finally {
-                try {
-                    connection?.disconnect()
-                } catch (_: Exception) {
-                }
+                return result
             }
         } finally {
             running.set(false)
@@ -927,36 +995,5 @@ Always include intent_category in your response for tracking purposes.
         return result
     }
 
-    private fun readAllBytes(input: java.io.InputStream): ByteArray {
-        val buffer = java.io.ByteArrayOutputStream()
-        val data = ByteArray(4 * 1024)
-        val bis = java.io.BufferedInputStream(input)
-        var n: Int
-        while (bis.read(data).also { n = it } != -1) {
-            buffer.write(data, 0, n)
-        }
-        return buffer.toByteArray()
-    }
-
-    /**
-     * Strip markdown code blocks from JSON response
-     * Handles formats like: ```json\n{...}\n``` or ```\n{...}\n```
-     */
-    private fun stripMarkdownCodeBlocks(text: String): String {
-        var cleaned = text.trim()
-
-        // Remove opening code block markers (```json or ```)
-        if (cleaned.startsWith("```json")) {
-            cleaned = cleaned.removePrefix("```json").trim()
-        } else if (cleaned.startsWith("```")) {
-            cleaned = cleaned.removePrefix("```").trim()
-        }
-
-        // Remove closing code block marker
-        if (cleaned.endsWith("```")) {
-            cleaned = cleaned.removeSuffix("```").trim()
-        }
-
-        return cleaned
-    }
+    // NOTE: readAllBytes() and stripMarkdownCodeBlocks() removed - now handled by LLMClient
 }

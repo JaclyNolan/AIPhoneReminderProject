@@ -11,8 +11,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.myapplication.MemoryEntry
-import com.example.myapplication.EnhancedMemoryManager
+import com.example.myapplication.memory.MemoryEntry
+import com.example.myapplication.memory.EnhancedMemoryManager
 
 /**
  * MemoryLogScreen - Display and manage all memory types

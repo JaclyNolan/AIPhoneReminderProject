@@ -1,9 +1,12 @@
-package com.example.myapplication
+package com.example.myapplication.core
 
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
+import com.example.myapplication.NotificationHelper
+import com.example.myapplication.PrefsHelper
+import com.example.myapplication.agents.AnalyzerAgent
 import android.hardware.display.DisplayManager
 import android.media.ImageReader
 import android.media.projection.MediaProjection

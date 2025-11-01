@@ -11,6 +11,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.example.myapplication.ui.MemoryLogScreen
 import com.example.myapplication.ui.theme.MyApplicationTheme
+import com.example.myapplication.memory.EnhancedMemoryManager
+import com.example.myapplication.memory.MemoryEntry
+import com.example.myapplication.memory.getMemory
+import com.example.myapplication.memory.clearMemory
+import com.example.myapplication.memory.deleteMemory
 
 class MemoryLogActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

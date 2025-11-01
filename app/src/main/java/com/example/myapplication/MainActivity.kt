@@ -16,6 +16,7 @@ import com.example.myapplication.ui.theme.MyApplicationTheme
 import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
 import com.example.myapplication.ui.ScreenshotApp
+import com.example.myapplication.core.MainForegroundService
 
 class MainActivity : ComponentActivity() {
     companion object {

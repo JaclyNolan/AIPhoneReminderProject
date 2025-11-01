@@ -29,6 +29,7 @@ class AdvancedActivity : ComponentActivity() {
                 var autoAdvance by rememberSaveable { mutableStateOf(prefs.getAutoAdvanceDialogues()) }
                 var shortResponseThreshold by rememberSaveable { mutableStateOf(prefs.getShortResponseThreshold()) }
                 var longResponseThreshold by rememberSaveable { mutableStateOf(prefs.getLongResponseThreshold()) }
+                var warningUrgencyThreshold by rememberSaveable { mutableStateOf(prefs.getWarningUrgencyThreshold()) }
 
                 AdvancedScreen(
                     interval = interval,
@@ -42,6 +43,7 @@ class AdvancedActivity : ComponentActivity() {
                     autoAdvance = autoAdvance,
                     shortResponseThreshold = shortResponseThreshold,
                     longResponseThreshold = longResponseThreshold,
+                    warningUrgencyThreshold = warningUrgencyThreshold,
                     onIntervalChange = { newInterval ->
                         interval = newInterval
                         prefs.setInterval(newInterval)
@@ -81,6 +83,10 @@ class AdvancedActivity : ComponentActivity() {
                     onLongResponseThresholdChange = { threshold ->
                         longResponseThreshold = threshold
                         prefs.setLongResponseThreshold(threshold)
+                    },
+                    onWarningUrgencyThresholdChange = { threshold ->
+                        warningUrgencyThreshold = threshold
+                        prefs.setWarningUrgencyThreshold(threshold)
                     },
                     onClose = {
                         // Indicate that preferences may have changed so caller can refresh (e.g., autoAdvance)

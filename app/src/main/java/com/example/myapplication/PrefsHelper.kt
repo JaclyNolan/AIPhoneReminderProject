@@ -64,10 +64,28 @@ class PrefsHelper(context: Context) {
     fun getAutoAdvanceDialogues(): Boolean = prefs.getBoolean("auto_advance_dialogues", true)
     fun setAutoAdvanceDialogues(value: Boolean) = prefs.edit { putBoolean("auto_advance_dialogues", value) }
 
-    // Response decision thresholds for Ralsei's chat behavior
+    // Response decision thresholds for Ralsei's chat behavior (range: -1.0 to 2.0)
     fun getShortResponseThreshold(): Float = String.format(Locale.US, "%.2f", prefs.getFloat("short_response_threshold", 0.5f)).toFloat()
-    fun setShortResponseThreshold(value: Float) = prefs.edit { putFloat("short_response_threshold", String.format(Locale.US, "%.2f", value.coerceIn(0.0f, 1.0f)).toFloat()) }
+    fun setShortResponseThreshold(value: Float) = prefs.edit { putFloat("short_response_threshold", String.format(Locale.US, "%.2f", value.coerceIn(-1.0f, 2.0f)).toFloat()) }
 
     fun getLongResponseThreshold(): Float = String.format(Locale.US, "%.2f", prefs.getFloat("long_response_threshold", 0.7f)).toFloat()
-    fun setLongResponseThreshold(value: Float) = prefs.edit { putFloat("long_response_threshold", String.format(Locale.US, "%.2f", value.coerceIn(0.0f, 1.0f)).toFloat()) }
+    fun setLongResponseThreshold(value: Float) = prefs.edit { putFloat("long_response_threshold", String.format(Locale.US, "%.2f", value.coerceIn(-1.0f, 2.0f)).toFloat()) }
+
+    // Character selection for warning system
+    fun getActiveCharacter(): String {
+        return prefs.getString("active_character", "ralsei") ?: "ralsei"
+    }
+
+    fun setActiveCharacter(characterId: String) {
+        prefs.edit { putString("active_character", characterId) }
+    }
+
+    // Warning urgency threshold: minimum urgency (0-10) to trigger warnings
+    fun getWarningUrgencyThreshold(): Int {
+        return prefs.getInt("warning_urgency_threshold", 4)
+    }
+
+    fun setWarningUrgencyThreshold(threshold: Int) {
+        prefs.edit { putInt("warning_urgency_threshold", threshold.coerceIn(0, 10)) }
+    }
 }

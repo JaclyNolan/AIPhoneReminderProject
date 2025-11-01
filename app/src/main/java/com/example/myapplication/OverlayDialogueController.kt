@@ -55,29 +55,10 @@ class OverlayDialogueController(private val context: Context) {
 
     init {
         windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        // Load persisted last response (if any) directly from SharedPreferences and make it the active queue so overlay can recover
-        try {
-            val prefs: SharedPreferences = context.getSharedPreferences("chat_prefs", Context.MODE_PRIVATE)
-            val s = prefs.getString("last_parsed_response", null)
-            if (!s.isNullOrBlank()) {
-                val arr = JSONArray(s)
-                val persisted = mutableListOf<DialogueEntry>()
-                for (i in 0 until arr.length()) {
-                    val o = arr.optJSONObject(i) ?: continue
-                    val speaker = o.optString("speaker", "Ralsei")
-                    val text = o.optString("text", "")
-                    val rel = if (o.has("relativePath")) o.optString("relativePath") else null
-                    if (text.isNotBlank()) persisted.add(DialogueEntry(speaker = speaker, text = text, relativePath = rel))
-                }
-                if (persisted.isNotEmpty()) {
-                    DialogueQueue.clear()
-                    DialogueQueue.enqueue(persisted)
-                    Log.d(TAG, "Loaded persisted last parsed response (${persisted.size} entries) into DialogueQueue")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to load persisted parsed response on OverlayDialogueController start", e)
-        }
+        // NOTE: Removed auto-loading of persisted dialogues on init to prevent duplicate enqueueing
+        // The persisted response in SharedPreferences is for crash recovery only
+        // ChatManager already enqueues dialogues when responses arrive, so we don't need to re-enqueue here
+
         // Observe the DialogueQueue and show/hide overlay when entries appear/disappear
         scope.launch {
             DialogueQueue.state.collect { list ->

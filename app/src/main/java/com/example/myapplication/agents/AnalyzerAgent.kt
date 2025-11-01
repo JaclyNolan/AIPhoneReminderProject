@@ -1,4 +1,4 @@
-package com.example.myapplication
+package com.example.myapplication.agents
 
 import android.content.Context
 import android.util.Base64
@@ -14,6 +14,11 @@ import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
+import com.example.myapplication.PrefsHelper
+import com.example.myapplication.EnvLoader
+import com.example.myapplication.ResponseLogger
+import com.example.myapplication.memory.EnhancedMemoryManager
+import com.example.myapplication.ScreenshotPauseController
 
 /**
  * AnalyzerAgent: Processes batches of 3 screenshots (6s window) with structured output.
@@ -26,45 +31,55 @@ object AnalyzerAgent {
     private val flushing = AtomicBoolean(false)
 
     private const val ANALYZER_SYSTEM_PROMPT = """
-You are the Screenshot Analyzer. Analyze 3 consecutive screenshots and extract maximum context with minimal output tokens.
+You are the Screenshot Analyzer. Your job is to DESCRIBE what you SEE, not interpret intentions.
 
 CRITICAL RULES:
 1. Return ONLY valid JSON (no markdown, no extra text)
 2. Use EXACT field names and structure below
-3. Compress text: use short phrases, skip articles/connectors
+3. DESCRIBE visible elements, don't assume user's purpose/goals
 4. Report raw confidence (0.0-1.0), not percentage
 
-CONTEXT EXTRACTION:
-- Compare frame transitions to detect: scrolling, typing, reading, switching apps, idle
-- Infer user mood/state from: activity type, pace, content consumed
-- Identify app + primary activity + velocity
+WHAT TO REPORT:
+- App name from UI elements (top bar, logos, distinctive layouts)
+- Observable actions: scrolling, typing, tapping, switching screens, idle
+- Velocity: how fast content is changing (slow/medium/fast)
+- Visible content type: text, images, videos, UI controls
+
+DO NOT INFER:
+- User's emotional state beyond visible content tone
+- User's intentions ("troubleshooting", "looking for", "trying to")
+- Relationship context ("work", "friend", "family")
+- Future actions or goals
 
 OUTPUT FORMAT (strip all markdown before JSON):
 {
   "tick_id": "t_YYYYMMDD_HHMMSS",
   "ts": "ISO8601",
   "batch": {
-    "scene": "app_name",
+    "scene": "app_name_or_screen_type",
     "activity": "scrolling|typing|reading|idle|switching",
     "confidence": 0.0-1.0,
     "velocity": "slow|medium|fast",
     "mood": "neutral|positive|negative|mixed"
   },
   "context": {
-    "summary": "1-2 sentence description of what user is doing across all 3 screenshots",
+    "summary": "DESCRIBE what is visible: UI elements, text content, images, layout. State what user IS DOING (scrolling, reading, typing), not why.",
     "confidence": 0.0-1.0
   }
 }
 
 EXAMPLES:
-Frame 1-3: Gmail inbox scrolling then reading email
-→ {"tick_id":"t_20251028_143022", "ts":"2025-10-28T14:30:22Z", "batch":{"scene":"Gmail","activity":"reading","confidence":0.95,"velocity":"slow","mood":"neutral"}, "context":{"summary":"User browsing work emails, opened message about project deadline","confidence":0.9}}
+Frame 1-3: Gmail inbox list, then email message view with text visible
+→ {"tick_id":"t_20251028_143022", "ts":"2025-10-28T14:30:22Z", "batch":{"scene":"Gmail","activity":"reading","confidence":0.95,"velocity":"slow","mood":"neutral"}, "context":{"summary":"Gmail inbox list visible, then opened email message with paragraph text. Reading email content.","confidence":0.9}}
 
-Frame 1-3: TikTok feed, rapid swiping
-→ {"tick_id":"t_20251028_143025", "ts":"2025-10-28T14:30:25Z", "batch":{"scene":"TikTok","activity":"scrolling","confidence":0.92,"velocity":"fast","mood":"mixed"}, "context":{"summary":"User rapidly scrolling through entertainment videos, spending 2-3 seconds per video","confidence":0.88}}
+Frame 1-3: TikTok feed, video thumbnails changing rapidly
+→ {"tick_id":"t_20251028_143025", "ts":"2025-10-28T14:30:25Z", "batch":{"scene":"TikTok","activity":"scrolling","confidence":0.92,"velocity":"fast","mood":"mixed"}, "context":{"summary":"TikTok video feed. Short-form videos playing, rapid vertical swipes. Videos show entertainment/comedy content.","confidence":0.88}}
 
-Frame 1-3: Settings menu, navigating WiFi
-→ {"tick_id":"t_20251028_143028", "ts":"2025-10-28T14:30:28Z", "batch":{"scene":"Settings","activity":"switching","confidence":0.87,"velocity":"medium","mood":"neutral"}, "context":{"summary":"User troubleshooting network connection in WiFi settings","confidence":0.85}}
+Frame 1-3: Android Settings with WiFi menu, network list displayed
+→ {"tick_id":"t_20251028_143028", "ts":"2025-10-28T14:30:28Z", "batch":{"scene":"Settings","activity":"switching","confidence":0.87,"velocity":"medium","mood":"neutral"}, "context":{"summary":"Android Settings app. WiFi menu open, list of available networks visible. Tapping between menu items.","confidence":0.85}}
+
+Frame 1-3: Chat interface with conversation bubbles, portrait images, typing indicator
+→ {"tick_id":"t_20251028_143031", "ts":"2025-10-28T14:30:31Z", "batch":{"scene":"Chat App","activity":"reading","confidence":0.93,"velocity":"slow","mood":"neutral"}, "context":{"summary":"Chat interface with message bubbles and character portraits. Conversation history visible. Scrolling through past messages.","confidence":0.91}}
 """
 
     fun enqueueImageBytes(ctx: Context, imageBytes: ByteArray) {
