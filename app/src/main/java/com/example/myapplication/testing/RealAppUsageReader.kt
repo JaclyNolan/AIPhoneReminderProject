@@ -5,7 +5,7 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
-import com.example.myapplication.agents.PatternAgent
+import com.example.myapplication.context.UsagePatternDetector
 import java.util.Calendar
 
 /**
@@ -23,7 +23,7 @@ object RealAppUsageReader {
      * @param intervalMinutes How far back to query (default: last 60 minutes)
      * @return List of AppUsageData with real usage statistics
      */
-    fun queryUsageStats(context: Context, intervalMinutes: Int = 60): List<PatternAgent.AppUsageData> {
+    fun queryUsageStats(context: Context, intervalMinutes: Int = 60): List<UsagePatternDetector.AppUsageData> {
         try {
             val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
             if (usageStatsManager == null) {
@@ -56,7 +56,7 @@ object RealAppUsageReader {
                 .map { usageStats ->
                     val displayName = getAppDisplayName(context, usageStats.packageName)
                     
-                    PatternAgent.AppUsageData(
+                    UsagePatternDetector.AppUsageData(
                         packageName = usageStats.packageName,
                         displayName = displayName,
                         lastTimeUsed = usageStats.lastTimeUsed,

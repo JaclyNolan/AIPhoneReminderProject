@@ -42,6 +42,8 @@ fun ResponseLogScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var chatResponses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
     var analyzerResponses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
+    var upcpResponses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
+    var paResponses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
     var showClearDialog by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableStateOf(0) }
 
@@ -53,15 +55,40 @@ fun ResponseLogScreen(onBack: () -> Unit) {
     LaunchedEffect(Unit) {
         chatResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.CHAT_MANAGER)
         analyzerResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.ANALYZER_AGENT)
+        upcpResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.USAGE_PATTERN_CONTEXT_PROVIDER)
+        paResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.PERSONALITY_AGENT)
     }
 
     fun refresh() {
         chatResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.CHAT_MANAGER)
         analyzerResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.ANALYZER_AGENT)
+        upcpResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.USAGE_PATTERN_CONTEXT_PROVIDER)
+        paResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.PERSONALITY_AGENT)
     }
 
-    val currentResponses = if (selectedTab == 0) chatResponses else analyzerResponses
-    val currentLogType = if (selectedTab == 0) ResponseLogger.LogType.CHAT_MANAGER else ResponseLogger.LogType.ANALYZER_AGENT
+    val currentResponses = when (selectedTab) {
+        0 -> chatResponses
+        1 -> analyzerResponses
+        2 -> upcpResponses
+        3 -> paResponses
+        else -> emptyList()
+    }
+    
+    val currentLogType = when (selectedTab) {
+        0 -> ResponseLogger.LogType.CHAT_MANAGER
+        1 -> ResponseLogger.LogType.ANALYZER_AGENT
+        2 -> ResponseLogger.LogType.USAGE_PATTERN_CONTEXT_PROVIDER
+        3 -> ResponseLogger.LogType.PERSONALITY_AGENT
+        else -> ResponseLogger.LogType.CHAT_MANAGER
+    }
+    
+    val currentTabName = when (selectedTab) {
+        0 -> "ChatManager"
+        1 -> "AnalyzerAgent"
+        2 -> "UPCP"
+        3 -> "PA"
+        else -> "Unknown"
+    }
 
     Scaffold(
         topBar = {
@@ -77,7 +104,7 @@ fun ResponseLogScreen(onBack: () -> Unit) {
                         onClick = { showClearDialog = true },
                         enabled = currentResponses.isNotEmpty()
                     ) {
-                        Text("Clear ${if (selectedTab == 0) "Chat" else "Analyzer"}")
+                        Text("Clear $currentTabName")
                     }
                     TextButton(
                         onClick = { refresh() }
@@ -120,6 +147,34 @@ fun ResponseLogScreen(onBack: () -> Unit) {
                             Text("AnalyzerAgent")
                             Text(
                                 text = "${analyzerResponses.size} logs",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                )
+                Tab(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    text = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("UPCP")
+                            Text(
+                                text = "${upcpResponses.size} logs",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                )
+                Tab(
+                    selected = selectedTab == 3,
+                    onClick = { selectedTab = 3 },
+                    text = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("PA")
+                            Text(
+                                text = "${paResponses.size} logs",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -182,7 +237,7 @@ fun ResponseLogScreen(onBack: () -> Unit) {
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No ${if (selectedTab == 0) "ChatManager" else "AnalyzerAgent"} responses logged yet",
+                        text = "No $currentTabName responses logged yet",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -214,8 +269,8 @@ fun ResponseLogScreen(onBack: () -> Unit) {
     if (showClearDialog) {
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
-            title = { Text("Clear ${if (selectedTab == 0) "ChatManager" else "AnalyzerAgent"} Log") },
-            text = { Text("Are you sure you want to clear all ${if (selectedTab == 0) "ChatManager" else "AnalyzerAgent"} logged responses? This cannot be undone.") },
+            title = { Text("Clear $currentTabName Log") },
+            text = { Text("Are you sure you want to clear all $currentTabName logged responses? This cannot be undone.") },
             confirmButton = {
                 TextButton(
                     onClick = {

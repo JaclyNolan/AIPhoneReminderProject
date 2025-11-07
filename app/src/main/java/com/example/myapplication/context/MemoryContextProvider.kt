@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.example.myapplication.agents.ChatManager
 import com.example.myapplication.memory.EnhancedMemoryManager
+import java.text.SimpleDateFormat
+import java.util.*
 
 /**
  * MemoryContextProvider: Provides memory system context
@@ -114,10 +116,70 @@ object MemoryContextProvider {
     }
     
     /**
+     * Format ISO 8601 timestamp to natural language
+     * 
+     * @param timestamp ISO 8601 timestamp string (yyyy-MM-dd'T'HH:mm:ssXXX)
+     * @return Natural language timestamp (e.g., "At 10:30 AM", "At 2:15 PM yesterday")
+     */
+    private fun formatTimestampToNaturalLanguage(timestamp: String): String {
+        try {
+            val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
+            val date = isoFormat.parse(timestamp) ?: return timestamp // Fallback to original if parse fails
+            
+            val now = Date()
+            val calendar = Calendar.getInstance()
+            calendar.time = now
+            val todayStart = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            
+            val entryCalendar = Calendar.getInstance()
+            entryCalendar.time = date
+            
+            // Format time as "HH:MM AM/PM"
+            val timeFormat = SimpleDateFormat("h:mm a", Locale.US)
+            val timeStr = timeFormat.format(date)
+            
+            // Determine relative time
+            val daysDiff = ((now.time - date.time) / (1000 * 60 * 60 * 24)).toInt()
+            
+            return when {
+                // Today
+                entryCalendar.get(Calendar.YEAR) == calendar.get(Calendar.YEAR) &&
+                entryCalendar.get(Calendar.DAY_OF_YEAR) == calendar.get(Calendar.DAY_OF_YEAR) -> {
+                    "At $timeStr"
+                }
+                // Yesterday
+                daysDiff == 1 -> {
+                    "At $timeStr yesterday"
+                }
+                // This week (within 7 days)
+                daysDiff in 2..7 -> {
+                    val dayFormat = SimpleDateFormat("EEEE", Locale.US)
+                    val dayName = dayFormat.format(date)
+                    "At $timeStr on $dayName"
+                }
+                // Older
+                else -> {
+                    val dateFormat = SimpleDateFormat("MMM dd", Locale.US)
+                    val dateStr = dateFormat.format(date)
+                    "At $timeStr on $dateStr"
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to format timestamp: $timestamp", e)
+            return timestamp // Fallback to original timestamp
+        }
+    }
+    
+    /**
      * Get formatted memory context for LLM prompts
      * 
      * @param context Application context
-     * @return Formatted string with all memory tiers
+     * @return Formatted string with all memory tiers using natural language timestamps
      */
     fun getFormattedMemoryContext(context: Context): String {
         val scenes = getSceneTimeline(context, limitMinutes = 60)
@@ -130,17 +192,20 @@ object MemoryContextProvider {
             appendLine()
             appendLine("Recent Scenes (last hour):")
             scenes.forEach { 
-                appendLine("  [${it.timestamp}] ${it.sceneLabel}: ${it.shortText}")
+                val naturalTime = formatTimestampToNaturalLanguage(it.timestamp)
+                appendLine("  $naturalTime, user is ${it.sceneLabel.lowercase()}: ${it.shortText}")
             }
             appendLine()
             appendLine("Condensed Memories:")
             memories.forEach {
-                appendLine("  [${it.timestamp}] ${it.content}")
+                val naturalTime = formatTimestampToNaturalLanguage(it.timestamp)
+                appendLine("  $naturalTime, ${it.content}")
             }
             appendLine()
             appendLine("Recent Intents:")
             intents.forEach {
-                appendLine("  [${it.timestamp}] ${it.intent}")
+                val naturalTime = formatTimestampToNaturalLanguage(it.timestamp)
+                appendLine("  $naturalTime, ${it.intent}")
             }
             appendLine()
             if (summaries.isNotEmpty()) {

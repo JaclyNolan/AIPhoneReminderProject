@@ -2,14 +2,14 @@ package com.example.myapplication.context
 
 import android.content.Context
 import android.util.Log
-import com.example.myapplication.agents.PatternAgent
+import com.example.myapplication.context.UsagePatternDetector
 import com.example.myapplication.testing.RealAppUsageReader
 
 /**
  * AppUsageContextProvider: Provides app usage statistics context
  * 
  * Single responsibility: Query Android UsageStats API for app usage data
- * Used by PatternAgent for violation detection
+ * Used by UsagePatternDetector for violation detection
  */
 object AppUsageContextProvider {
     private const val TAG = "AppUsageContextProvider"
@@ -21,7 +21,7 @@ object AppUsageContextProvider {
      * @param intervalMinutes How far back to query (default: 60 minutes)
      * @return List of app usage data sorted by most recent first
      */
-    fun getUsageStats(context: Context, intervalMinutes: Int = 60): List<PatternAgent.AppUsageData> {
+    fun getUsageStats(context: Context, intervalMinutes: Int = 60): List<UsagePatternDetector.AppUsageData> {
         Log.d(TAG, "Querying usage stats for last $intervalMinutes minutes")
         return RealAppUsageReader.queryUsageStats(context, intervalMinutes)
     }
@@ -32,7 +32,7 @@ object AppUsageContextProvider {
      * @param context Application context
      * @return Most recent app usage data, or null if none found
      */
-    fun getCurrentApp(context: Context): PatternAgent.AppUsageData? {
+    fun getCurrentApp(context: Context): UsagePatternDetector.AppUsageData? {
         val stats = getUsageStats(context, intervalMinutes = 1)
         return stats.firstOrNull()
     }

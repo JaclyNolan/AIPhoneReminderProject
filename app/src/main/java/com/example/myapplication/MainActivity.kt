@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
 import com.example.myapplication.ui.ScreenshotApp
 import com.example.myapplication.core.MainForegroundService
+import com.example.myapplication.core.WarningCheckWorker
 
 class MainActivity : ComponentActivity() {
     companion object {
@@ -24,11 +25,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private lateinit var prefs: PrefsHelper
+    private var floatingOverlay: FloatingControlOverlay? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         prefs = PrefsHelper(this)
+        
+        // Always show floating overlay when app opens (reset visibility so it appears even if dismissed)
+        prefs.setFloatingOverlayVisible(true)
+        try {
+            floatingOverlay = FloatingControlOverlay(this).apply {
+                onDismissListener = {
+                    floatingOverlay = null
+                    Log.d(TAG, "Floating overlay dismissed - reference cleared")
+                }
+            }
+            floatingOverlay?.show()
+            Log.d(TAG, "Floating overlay shown")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to show floating overlay", e)
+        }
         val mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
         setContent {
@@ -43,6 +60,7 @@ class MainActivity : ComponentActivity() {
             var openAIApiKey by remember { mutableStateOf(prefs.getOpenAIApiKey() ?: "") }
             var openAIBatchSize by remember { mutableStateOf(prefs.getOpenAIBatchSize()) }
             var autoAdvance by remember { mutableStateOf(prefs.getAutoAdvanceDialogues()) }
+            var isWarningSystemEnabled by remember { mutableStateOf(prefs.isWarningSystemEnabled()) }
 
             val notificationPermissionLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.RequestPermission(),
@@ -166,15 +184,56 @@ class MainActivity : ComponentActivity() {
                         val intent = Intent(this, com.example.myapplication.ui.ResponseLogActivity::class.java)
                         startActivity(intent)
                     },
+                    onOpenDebug = {
+                        val intent = Intent(this, com.example.myapplication.testing.DebugActivity::class.java)
+                        startActivity(intent)
+                    },
                     // pass theme state and toggle callback so the UI can control theme
                     currentDarkTheme = isDarkTheme,
                     onToggleTheme = {
                         isDarkTheme = !isDarkTheme
                         prefs.setDarkTheme(isDarkTheme)
                     },
-                    autoAdvance = autoAdvance
+                    autoAdvance = autoAdvance,
+                    isWarningSystemEnabled = isWarningSystemEnabled,
+                    onWarningSystemChange = { enabled ->
+                        isWarningSystemEnabled = enabled
+                        prefs.setWarningSystemEnabled(enabled)
+                        if (enabled) {
+                            WarningCheckWorker.schedulePeriodicCheck(this)
+                            Log.d(TAG, "Warning system enabled")
+                        } else {
+                            WarningCheckWorker.cancelPeriodicCheck(this)
+                            Log.d(TAG, "Warning system disabled")
+                        }
+                    }
                  )
              }
          }
      }
- }
+     
+    override fun onResume() {
+        super.onResume()
+        if (floatingOverlay == null) {
+            try {
+                floatingOverlay = FloatingControlOverlay(this).apply {
+                    onDismissListener = {
+                        floatingOverlay = null
+                        Log.d(TAG, "Floating overlay dismissed - reference cleared")
+                    }
+                }
+                floatingOverlay?.show()
+                Log.d(TAG, "Floating overlay recreated on resume")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to recreate floating overlay on resume", e)
+            }
+        }
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        floatingOverlay?.destroy()
+        floatingOverlay = null
+        Log.d(TAG, "MainActivity destroyed, floating overlay cleaned up")
+    }
+}

@@ -1,4 +1,4 @@
-package com.example.myapplication.agents
+package com.example.myapplication.context
 
 import android.content.Context
 import android.util.Base64
@@ -19,13 +19,18 @@ import com.example.myapplication.EnvLoader
 import com.example.myapplication.ResponseLogger
 import com.example.myapplication.memory.EnhancedMemoryManager
 import com.example.myapplication.ScreenshotPauseController
+import com.example.myapplication.agents.ChatManager
 
 /**
- * AnalyzerAgent: Processes batches of 3 screenshots (6s window) with structured output.
+ * ScreenshotAnalyzer: Processes batches of 3 screenshots (6s window) with structured output.
+ * 
+ * Context processor that transforms raw screenshots into structured scene data.
  * Outputs: batch_summary, frames[], justification, confidence, safety_flags
+ * 
+ * This is NOT a decision-making agent - it only processes visual input into usable context.
  */
-object AnalyzerAgent {
-    private const val TAG = "AnalyzerAgent"
+object ScreenshotAnalyzer {
+    private const val TAG = "ScreenshotAnalyzer"
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val queue = mutableListOf<ByteArray>()
     private val flushing = AtomicBoolean(false)

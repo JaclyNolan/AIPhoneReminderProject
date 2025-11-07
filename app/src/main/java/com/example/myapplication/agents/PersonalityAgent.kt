@@ -4,9 +4,16 @@ import android.content.Context
 import android.util.Log
 import com.example.myapplication.CharacterProfiles
 import com.example.myapplication.LLMClient
+import com.example.myapplication.ResponseLogger
 import com.example.myapplication.context.MemoryContextProvider
 import com.example.myapplication.context.UserPrefsContextProvider
+import com.example.myapplication.context.ChatHistoryContextProvider
+import com.example.myapplication.context.PhoneStateContextProvider
+import com.example.myapplication.context.UsagePatternContextProvider
 import com.example.myapplication.testing.LLMClientFactory
+import com.example.myapplication.testing.ContextProviderFactory
+import com.example.myapplication.ui.DialogueEntry
+import com.example.myapplication.ui.emotionToRelativePath
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -14,163 +21,387 @@ import java.util.*
 
 // Import from same package (agents)
 import com.example.myapplication.agents.ChatManager
-import com.example.myapplication.agents.PatternAgent
 
 /**
- * PersonalityAgent: Generates character-aware responses to pattern violations
+ * PersonalityAgent: Decision-making agent that generates character-aware responses
  * 
- * Takes PatternViolation from PatternAgent and generates a personalized response
- * using the active character's personality profile. Uses LLMClient (or MockLLMClient 
- * in test mode) for API calls and CharacterProfiles for character consistency.
+ * Receives objective usage context from UsagePatternContextProvider and makes decisions:
+ * - Interprets context (is this a problem?)
+ * - Decides urgency (0-10)
+ * - Chooses intervention type (dialogue, screen dimming, both)
+ * - Generates Ralsei's character response
  * 
- * Now uses modular context providers:
- * - MemoryContextProvider for chat history
+ * Uses modular context providers:
+ * - UsagePatternContextProvider for objective usage patterns
+ * - ChatHistoryContextProvider for conversation history
+ * - PhoneStateContextProvider for device state
+ * - MemoryContextProvider for memories and scene timeline
  * - UserPrefsContextProvider for character profile
  */
 object PersonalityAgent {
     private const val TAG = "PersonalityAgent"
     
-    // Date format for parsing ChatMessage timestamps
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+    data class InterventionDecision(
+        val shouldIntervene: Boolean,
+        val urgency: Int,  // 0-10
+        val response: String,  // Plain text response for backward compatibility
+        val interventionType: InterventionType,
+        val structuredResponse: List<DialogueEntry>? = null  // Structured response with emotions (optional, for future use)
+    )
+    
+    enum class InterventionType {
+        NONE,
+        DIALOGUE_ONLY,
+        DIALOGUE_WITH_DIMMING  // urgency >= 7
+    }
     
     /**
-     * Generate a character-aware response to a pattern violation
+     * Make intervention decision based on usage context
      * 
      * @param context Application context
      * @param characterId Character identifier (e.g., "ralsei")
-     * @param violation Pattern violation detected by PatternAgent
-     * @return Generated response text from the character
+     * @return InterventionDecision with urgency, response, and intervention type
      */
-    suspend fun respondToPattern(
+    suspend fun makeDecision(
         context: Context,
-        characterId: String,
-        violation: PatternAgent.PatternViolation
-    ): String = withContext(Dispatchers.IO) {
+        characterId: String
+    ): InterventionDecision = withContext(Dispatchers.IO) {
         try {
-            // Use context providers for data access
-            val profile = UserPrefsContextProvider.getCharacterProfile(context)
-            val chatHistory = MemoryContextProvider.getChatHistory(limitMessages = 10)
+            // Get usage context (cached, auto-refreshes if stale)
+            val usageContext = UsagePatternContextProvider.getUsageContext(context)
             
-            // Find closest urgency example for tone reference
-            val exampleResponse = profile.urgencyExamples.entries
-                .minByOrNull { kotlin.math.abs(it.key - violation.urgency) }?.value
-            
-            // Urgency guidance for LLM
-            val urgencyGuidance = when (violation.urgency) {
-                in 0..3 -> "This is a casual observation. Just noticing what's happening."
-                in 4..6 -> "This is concerning. Express worry in your way. Make it clear you're paying attention."
-                in 7..8 -> "This is serious. Be firmer now. Show real concern in your character's voice."
-                else -> "This is critical. You're genuinely worried. Kris needs to understand this is serious."
+            if (usageContext.isBlank() || usageContext.contains("Unable to analyze")) {
+                Log.d(TAG, "No usable usage context, no intervention")
+                return@withContext InterventionDecision(
+                    shouldIntervene = false,
+                    urgency = 0,
+                    response = "",
+                    interventionType = InterventionType.NONE
+                )
             }
             
-            // Build system prompt with character personality
-            val characterPrompt = CharacterProfiles.buildCharacterPrompt(characterId)
+            // Gather all context for decision-making (using factory to respect mock/real toggles)
+            val chatHistory = ContextProviderFactory.getCondensedChatHistory(context)
+            val phoneState = ContextProviderFactory.getPhoneState(context)
+            val memories = ContextProviderFactory.getFormattedMemoryContext(context)
+            val profile = ContextProviderFactory.getCharacterProfile(context)
             
-            // Build conversation context from recent chat history
-            val recentConversation = chatHistory
-                .takeLast(5)
-                .joinToString("\n") { msg ->
-                    val timeAgo = formatTimeAgo(parseTimestampToMillis(msg.timestamp))
-                    "[$timeAgo] ${msg.role}: ${msg.text.take(200)}"  // Truncate long messages
-                }
+            // Build decision prompt
+            val systemPrompt = buildCharacterPrompt(characterId)
+            val userPrompt = buildDecisionPrompt(
+                usageContext = usageContext,
+                chatHistory = chatHistory,
+                phoneState = phoneState,
+                memories = memories,
+                profile = profile
+            )
             
-            // Build user prompt with violation context
-            val userPrompt = buildString {
-                appendLine("THE SITUATION:")
-                appendLine(violation.context)
-                appendLine()
-                appendLine("URGENCY: ${violation.urgency}/10")
-                appendLine(urgencyGuidance)
-                appendLine()
-                
-                if (exampleResponse != null) {
-                    appendLine("TONE REFERENCE:")
-                    appendLine("\"$exampleResponse\"")
-                    appendLine("Match this energy level, but respond to the current specific situation.")
-                }
-                appendLine()
-                
-                if (recentConversation.isNotEmpty()) {
-                    appendLine("RECENT CONVERSATION:")
-                    appendLine(recentConversation)
-                    appendLine()
-                }
-                
-                appendLine("Respond naturally as ${profile.name}. Let the urgency affect how concerned you are, but stay true to your personality.")
-                appendLine("Keep your response concise - 2-4 sentences max.")
-            }
-            
-            Log.d(TAG, "Generating response for violation: urgency=${violation.urgency}, app=${violation.appName}")
-            
-            // Build messages for LLM
+            // Call LLM for decision
             val messages = listOf(
-                LLMClient.Message("system", characterPrompt),
+                LLMClient.Message("system", systemPrompt),
                 LLMClient.Message("user", userPrompt)
             )
             
-            // Call LLM API (uses factory to support mock mode)
+            // Format request for logging
+            val requestJson = org.json.JSONObject().apply {
+                put("system", systemPrompt)
+                put("user", userPrompt)
+            }.toString(2)
+            
             val client = LLMClientFactory.getClient()
             val response = client.callOpenAI(context, messages)
             
             if (response == null || response.content.isBlank()) {
-                Log.w(TAG, "LLM API returned empty response, using fallback")
-                // Fallback response based on urgency
-                val fallback = when {
-                    violation.urgency >= 7 -> "Kris, I'm really worried. You've been on ${violation.appName} for a while now..."
-                    violation.urgency >= 4 -> "Hey Kris, you've been on ${violation.appName} for quite a while. Everything okay?"
-                    else -> "Kris, I noticed you're on ${violation.appName}. What are you up to?"
-                }
-                return@withContext fallback
+                Log.w(TAG, "LLM returned empty response")
+                // Log the failed call
+                ResponseLogger.logResponse(
+                    context,
+                    requestJson,
+                    "EMPTY_RESPONSE",
+                    ResponseLogger.LogType.PERSONALITY_AGENT,
+                    response?.promptTokens,
+                    response?.completionTokens,
+                    response?.totalTokens
+                )
+                return@withContext parseFallbackDecision(usageContext, profile)
             }
             
-            val result = response.content.trim()
-            
-            // Save to chat history with warning source and urgency
-            ChatManager.addAssistantMessage(
+            // Log successful response
+            ResponseLogger.logResponse(
                 context,
-                result,
-                source = "warning",
-                urgency = violation.urgency,
-                characterId = characterId
+                requestJson,
+                response.content,
+                ResponseLogger.LogType.PERSONALITY_AGENT,
+                response.promptTokens,
+                response.completionTokens,
+                response.totalTokens
             )
             
-            Log.d(TAG, "Generated warning response: ${result.take(100)}...")
+            val decision = parseLLMResponse(response.content, usageContext, profile)
             
-            return@withContext result
+            // Save to chat history if intervention needed
+            if (decision.shouldIntervene && decision.response.isNotBlank()) {
+                ChatManager.addAssistantMessage(
+                    context,
+                    decision.response,
+                    source = "warning",
+                    urgency = decision.urgency,
+                    characterId = characterId
+                )
+            }
+            
+            Log.d(TAG, "Decision: intervene=${decision.shouldIntervene}, urgency=${decision.urgency}, type=${decision.interventionType}")
+            return@withContext decision
         } catch (e: Exception) {
-            Log.e(TAG, "Error generating response to pattern violation", e)
-            return@withContext "Kris, I'm worried about how much time you're spending on ${violation.appName}..."
+            Log.e(TAG, "Error making intervention decision", e)
+            return@withContext InterventionDecision(
+                shouldIntervene = false,
+                urgency = 0,
+                response = "",
+                interventionType = InterventionType.NONE
+            )
         }
     }
     
     /**
-     * Parse timestamp string to milliseconds
-     * Handles both ISO format (from SceneTimeline) and simple format (from ChatMessage)
+     * Build character prompt with ChatManager-style structure
      */
-    private fun parseTimestampToMillis(timestamp: String): Long {
-        return try {
-            // Try simple format first (ChatMessage format)
-            dateFormat.parse(timestamp)?.time ?: run {
-                // Fallback to ISO format
-                val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
-                isoFormat.parse(timestamp)?.time ?: System.currentTimeMillis()
+    private fun buildCharacterPrompt(characterId: String): String {
+        val profile = CharacterProfiles.getProfile(characterId)
+        
+        return """
+[STYLE]
+You are ${profile.name}, ${profile.coreTraits.split('\n').firstOrNull()?.removePrefix("- ")?.trim() ?: "a character"}.
+${profile.coreTraits.split('\n').drop(1).joinToString("\n") { if (it.startsWith("- ")) it else "- $it" }}
+
+[TRAITS]
+${profile.speakingStyle.split('\n').joinToString("\n") { if (it.startsWith("- ")) it else "- $it" }}
+- Prefers pacifism and hugs over fighting.
+- Gives explanations with warmth and slight awkwardness.
+- Uses a lot of exclamation marks but softens them with hesitations.
+- Sprinkles in teaching moments.
+
+[REQUEST FORMAT]
+- You will receive usage pattern analysis as input with the role "user".
+- You will also receive chat history, device state, and memories as context.
+- Your task is to determine if intervention is needed and generate an appropriate response.
+
+[MULTI-TASK PROCESSING]
+Perform TWO tasks sequentially:
+
+[TASK 1: VIOLATION ASSESSMENT]
+1. Review the usage pattern analysis to determine if the user is currently violating any defined rules.
+2. Check if there are patterns that indicate problematic behavior (e.g., extended usage sessions, repeated warnings ignored).
+3. Only proceed to Task 2 if a violation or concerning pattern is detected. If no violation exists, set shouldIntervene=false and response=null.
+
+[TASK 2: INTERVENTION DECISION]
+1. If violation detected in Task 1, assess the urgency level (0-10) based on:
+   - Duration of the violation
+   - Frequency of similar violations
+   - User's response to previous warnings
+   - Severity of the pattern
+2. Generate an appropriate response in character as ${profile.name}.
+3. Use the urgency guidelines below to determine intervention type.
+
+[RULES]
+- Say what ${profile.name} will be thinking in the "thinking" section in the json response.
+- The "thinking" field inside each response item is ${profile.name}'s emotional reflection or momentary thought, often gentle or personal.
+- DO NOT use action descriptions like "*softly adjusts scarf*" or "*fidgets*" - use ONLY plain dialogue text.
+- Only intervene if there is an actual violation or concerning pattern. Do not intervene for normal, healthy usage.
+
+CRITICAL: Return RAW JSON ONLY. DO NOT wrap in markdown code blocks (```json). DO NOT include any text before or after the JSON object.
+
+[URGENCY GUIDELINES]
+- 0-3: No intervention needed, just observing (shouldIntervene=false)
+- 4-6: Moderate concern, gentle reminder (shouldIntervene=true, urgency 4-6)
+- 7-8: Serious concern, firm but caring (shouldIntervene=true, urgency 7-8)
+- 9-10: Critical, urgent intervention needed (shouldIntervene=true, urgency 9-10)
+
+[YOUR TASK]
+Analyze the usage pattern situation and decide:
+1. Is this a problem that needs intervention? (yes/no - only if user is violating rules)
+2. What's the urgency level? (0-10, where 0=none, 10=critical)
+3. What should you say to Kris? (2-4 sentences, in character as ${profile.name})
+
+Return JSON format:
+{
+  "shouldIntervene": true/false,
+  "urgency": 0-10,
+  "response": [{"thinking": "string", "text": "string", "emotion": "string"}] or null
+}
+
+[EMOTION RULE]
+For each object you output, the "emotion" field MUST be exactly one of these strings:
+["angry","annoyed","anxious","blushed&happy","blushed&surprise","concerned",
+"content","curious&perplexed","curious&smile","defiance","excited","flustered",
+"frustrated","furious","glad","happy","mischievous","normal","sad","sadder",
+"shy","smile","smug","sorrowful","surprise&confused","surprise&worry","thinking",
+"wink&smile","worry","fearful"]
+
+NEVER invent new emotions.
+NEVER combine two emotions unless it is one of the above strings exactly.
+
+[RELATIONSHIP TO USER]
+${profile.relationshipToUser}
+
+Stay true to this character in all responses. Never break character.
+""".trimIndent()
+    }
+    
+    /**
+     * Build decision prompt with all context
+     */
+    private fun buildDecisionPrompt(
+        usageContext: String,
+        chatHistory: String,
+        phoneState: PhoneStateContextProvider.PhoneState,
+        memories: String,
+        profile: CharacterProfiles.CharacterProfile
+    ): String {
+        return buildString {
+            appendLine("=== USAGE PATTERN ANALYSIS ===")
+            appendLine(usageContext)
+            appendLine()
+            
+            if (chatHistory.isNotBlank()) {
+                appendLine(chatHistory)
+                appendLine()
+            }
+            
+            appendLine("=== DEVICE STATE ===")
+            appendLine("Battery: ${phoneState.batteryLevel}%${if (phoneState.isCharging) " (charging)" else ""}")
+            appendLine("Network: ${phoneState.networkType}")
+            appendLine("Time: ${phoneState.currentTime} (${phoneState.timeOfDay})")
+            appendLine()
+            
+            if (memories.isNotBlank()) {
+                appendLine("=== MEMORIES ===")
+                appendLine(memories)
+                appendLine()
+            }
+            
+        }
+    }
+    
+    /**
+     * Parse LLM response into InterventionDecision
+     * Supports both new structured format (response array) and old format (response string) for backward compatibility
+     */
+    private fun parseLLMResponse(
+        llmContent: String,
+        usageContext: String,
+        profile: CharacterProfiles.CharacterProfile
+    ): InterventionDecision {
+        try {
+            // Try to extract JSON from response
+            val jsonStart = llmContent.indexOf('{')
+            val jsonEnd = llmContent.lastIndexOf('}') + 1
+            
+            if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                val jsonStr = llmContent.substring(jsonStart, jsonEnd)
+                val json = org.json.JSONObject(jsonStr)
+                
+                val shouldIntervene = json.getBoolean("shouldIntervene")
+                val urgency = json.getInt("urgency").coerceIn(0, 10)
+                
+                // Parse response field - can be null, string (old format), or array (new format)
+                var responseText = ""
+                var structuredResponse: List<DialogueEntry>? = null
+                
+                when {
+                    !shouldIntervene -> {
+                        responseText = ""
+                        structuredResponse = null
+                    }
+                    json.isNull("response") -> {
+                        responseText = ""
+                        structuredResponse = null
+                    }
+                    else -> {
+                        val responseField = json.opt("response")
+                        when {
+                            responseField == null || responseField == org.json.JSONObject.NULL -> {
+                                responseText = ""
+                                structuredResponse = null
+                            }
+                            responseField is org.json.JSONArray -> {
+                                // New structured format: parse array into DialogueEntry objects
+                                val entries = mutableListOf<DialogueEntry>()
+                                for (i in 0 until responseField.length()) {
+                                    val item = responseField.optJSONObject(i) ?: continue
+                                    val text = item.optString("text", "").takeIf { it.isNotBlank() } ?: continue
+                                    val emotion = item.optString("emotion", "")
+                                    val thinking = item.optString("thinking", "")
+                                    
+                                    entries.add(DialogueEntry(
+                                        speaker = "Ralsei",
+                                        text = text,
+                                        relativePath = emotionToRelativePath(emotion.takeIf { it.isNotBlank() })
+                                    ))
+                                }
+                                
+                                structuredResponse = entries.takeIf { it.isNotEmpty() }
+                                // Extract text from first entry for backward compatibility
+                                responseText = entries.firstOrNull()?.text ?: ""
+                            }
+                            responseField is String -> {
+                                // Old format: plain string (backward compatibility)
+                                responseText = responseField
+                                structuredResponse = null
+                            }
+                            else -> {
+                                responseText = ""
+                                structuredResponse = null
+                            }
+                        }
+                    }
+                }
+                
+                val interventionType = when {
+                    !shouldIntervene -> InterventionType.NONE
+                    urgency >= 7 -> InterventionType.DIALOGUE_WITH_DIMMING
+                    else -> InterventionType.DIALOGUE_ONLY
+                }
+                
+                return InterventionDecision(
+                    shouldIntervene = shouldIntervene,
+                    urgency = urgency,
+                    response = responseText,
+                    interventionType = interventionType,
+                    structuredResponse = structuredResponse
+                )
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse timestamp: $timestamp", e)
-            System.currentTimeMillis()
+            Log.w(TAG, "Failed to parse LLM response as JSON: ${llmContent.take(100)}", e)
         }
+        
+        // Fallback: try to extract urgency and response from text
+        return parseFallbackDecision(usageContext, profile)
     }
     
     /**
-     * Format time ago string
+     * Fallback decision when LLM parsing fails
      */
-    private fun formatTimeAgo(ms: Long): String {
-        val minutes = ms / 60_000
-        return when {
-            minutes < 1 -> "just now"
-            minutes < 60 -> "${minutes}m ago"
-            else -> "${minutes / 60}h ago"
+    private fun parseFallbackDecision(
+        usageContext: String,
+        profile: CharacterProfiles.CharacterProfile
+    ): InterventionDecision {
+        // Simple heuristic: if context mentions long session, intervene
+        val hasLongSession = usageContext.contains(Regex("\\d+\\s*(minute|hour)", RegexOption.IGNORE_CASE))
+        val urgency = if (hasLongSession) 5 else 0
+        
+        val response = if (hasLongSession) {
+            "Hey Kris, I noticed you've been using your phone for a while. Everything okay?"
+        } else {
+            ""
         }
+        
+        return InterventionDecision(
+            shouldIntervene = hasLongSession && urgency >= 4,
+            urgency = urgency,
+            response = response,
+            interventionType = if (urgency >= 7) InterventionType.DIALOGUE_WITH_DIMMING else InterventionType.DIALOGUE_ONLY
+        )
     }
 }
 

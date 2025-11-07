@@ -3,7 +3,7 @@ package com.example.myapplication.testing
 import android.content.Context
 import android.util.Log
 import com.example.myapplication.agents.ChatManager
-import com.example.myapplication.agents.PatternAgent
+import com.example.myapplication.context.UsagePatternDetector
 import com.example.myapplication.agents.PersonalityAgent
 import com.example.myapplication.memory.EnhancedMemoryManager
 import com.example.myapplication.PrefsHelper
@@ -57,7 +57,7 @@ object TestAgent {
         
         // Check for violations
         Log.d(TAG, "Checking for violations...")
-        val violation = PatternAgent.checkViolations(context)
+        val violation = UsagePatternDetector.checkViolations(context)
         
         val actualUrgency = violation?.urgency ?: 0
         val actualOutcome = when {
@@ -221,7 +221,7 @@ object TestAgent {
         val actualUrgency: Int,
         val expectedOutcome: TestScenario.OutcomeType,
         val actualOutcome: TestScenario.OutcomeType,
-        val violation: PatternAgent.PatternViolation?
+        val violation: UsagePatternDetector.PatternViolation?
     )
     
     data class SystemState(
@@ -233,7 +233,7 @@ object TestAgent {
     )
     
     /**
-     * Build PatternAgentContext from manual test inputs (LEGACY - for custom scenarios)
+     * Build PatternDetectorContext from manual test inputs (LEGACY - for custom scenarios)
      * For use in DebugScreen manual testing
      * 
      * @param context Application context
@@ -243,7 +243,7 @@ object TestAgent {
      * @param userBehaviorStrings List of user-defined bad behaviors
      * @param additionalChatHistory Additional chat messages to include
      * @param additionalSummaries Additional screen summaries to include
-     * @return PatternAgentContext ready for testing
+     * @return PatternDetectorContext ready for testing
      */
     fun buildManualContext(
         context: android.content.Context,
@@ -252,8 +252,8 @@ object TestAgent {
         currentTimeString: String,
         userBehaviorStrings: List<String>,
         additionalChatHistory: List<ChatManager.ChatMessage> = emptyList(),
-        additionalSummaries: List<PatternAgent.ScreenSummary> = emptyList()
-    ): PatternAgent.PatternAgentContext {
+        additionalSummaries: List<UsagePatternDetector.ScreenSummary> = emptyList()
+    ): UsagePatternDetector.PatternDetectorContext {
         // Parse time
         val parts = currentTimeString.split(":")
         val hour = parts.getOrNull(0)?.toIntOrNull() ?: 0
@@ -277,7 +277,7 @@ object TestAgent {
         
         // Convert user behavior strings to UserBadBehavior objects
         val userBehaviors = userBehaviorStrings.mapIndexed { index, description ->
-            PatternAgent.UserBadBehavior(
+            UsagePatternDetector.UserBadBehavior(
                 id = "behavior_$index",
                 description = description.trim(),
                 createdAt = System.currentTimeMillis()
@@ -293,7 +293,7 @@ object TestAgent {
         }
         
         // Build context
-        return PatternAgent.PatternAgentContext(
+        return UsagePatternDetector.PatternDetectorContext(
             appUsageStats = listOf(appUsageData),
             chatHistory = chatHistory,
             userDefinedBehaviors = userBehaviors,
@@ -302,17 +302,17 @@ object TestAgent {
     }
     
     /**
-     * Build PatternAgentContext from REAL device data
+     * Build PatternDetectorContext from REAL device data
      * This mimics the automatic 5-minute check but can be triggered on-demand
      * 
      * @param context Application context
      * @param usageIntervalMinutes How far back to query app usage (default: 60 minutes)
-     * @return PatternAgentContext with real data from device
+     * @return PatternDetectorContext with real data from device
      */
     fun buildRealContext(
         context: android.content.Context,
         usageIntervalMinutes: Int = 60
-    ): PatternAgent.PatternAgentContext {
+    ): UsagePatternDetector.PatternDetectorContext {
         android.util.Log.d(TAG, "Building real context from device data...")
         
         // 1. Query real app usage from Android API
@@ -334,7 +334,7 @@ object TestAgent {
         android.util.Log.d(TAG, "Retrieved ${recentSummaries.size} recent screen summaries")
         
         // Build full context
-        return PatternAgent.PatternAgentContext(
+        return UsagePatternDetector.PatternDetectorContext(
             appUsageStats = appUsageStats,
             chatHistory = chatHistory,
             userDefinedBehaviors = userBehaviors,
@@ -346,7 +346,7 @@ object TestAgent {
      * Get user-defined bad behaviors from SharedPreferences
      * TODO: Implement proper storage for user-defined behaviors
      */
-    private fun getUserDefinedBehaviors(context: android.content.Context): List<PatternAgent.UserBadBehavior> {
+    private fun getUserDefinedBehaviors(context: android.content.Context): List<UsagePatternDetector.UserBadBehavior> {
         // For now, return empty list
         // In future: Read from SharedPreferences where onboarding screen saves them
         return emptyList()
@@ -358,7 +358,7 @@ object TestAgent {
     private fun getRecentScreenSummaries(
         context: android.content.Context,
         limitMinutes: Int = 30
-    ): List<PatternAgent.ScreenSummary> {
+    ): List<UsagePatternDetector.ScreenSummary> {
         try {
             val timeline = EnhancedMemoryManager.getAllSceneTimeline(context)
             val cutoffTime = System.currentTimeMillis() - (limitMinutes * 60 * 1000)
@@ -370,7 +370,7 @@ object TestAgent {
                         val timestamp = format.parse(entry.timestamp)?.time ?: return@mapNotNull null
                         
                         if (timestamp >= cutoffTime) {
-                            PatternAgent.ScreenSummary(
+                            UsagePatternDetector.ScreenSummary(
                                 timestamp = timestamp,
                                 appName = entry.sceneLabel,
                                 summary = entry.shortText,

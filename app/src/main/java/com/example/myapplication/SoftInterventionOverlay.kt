@@ -9,7 +9,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import com.example.myapplication.agents.PatternAgent
+import com.example.myapplication.context.UsagePatternDetector
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -66,7 +66,7 @@ object SoftInterventionOverlay {
      * @param response Character response text
      * @param violation Pattern violation that triggered this intervention
      */
-    fun show(context: Context, response: String, violation: PatternAgent.PatternViolation) {
+    fun show(context: Context, response: String, violation: UsagePatternDetector.PatternViolation) {
         if (!Settings.canDrawOverlays(context)) {
             Log.e(TAG, "Cannot show overlay: SYSTEM_ALERT_WINDOW permission not granted")
             return
@@ -186,7 +186,7 @@ object SoftInterventionOverlay {
     @Composable
     private fun SoftInterventionUI(
         response: String,
-        violation: PatternAgent.PatternViolation,
+        violation: UsagePatternDetector.PatternViolation,
         onTakeBreak: () -> Unit,
         onFiveMore: () -> Unit
     ) {

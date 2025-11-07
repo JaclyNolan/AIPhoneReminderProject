@@ -1,10 +1,10 @@
 package com.example.myapplication.testing
 
-import com.example.myapplication.agents.PatternAgent
+import com.example.myapplication.context.UsagePatternDetector
 import java.util.Calendar
 
 /**
- * Mock AppUsageStats data generator for testing PatternAgent
+ * Mock AppUsageStats data generator for testing UsagePatternDetector
  * 
  * Generates realistic mock data matching Android UsageStatsManager.queryUsageStats() format:
  * - android.app.usage.UsageStats structure
@@ -23,11 +23,11 @@ object MockAppUsageStats {
         sessionStartTime: Long,
         sessionDurationMinutes: Int,
         isForeground: Boolean = true
-    ): PatternAgent.AppUsageData {
+    ): UsagePatternDetector.AppUsageData {
         val sessionDurationMs = sessionDurationMinutes * 60 * 1000L
         val endTime = sessionStartTime + sessionDurationMs
         
-        return PatternAgent.AppUsageData(
+        return UsagePatternDetector.AppUsageData(
             packageName = packageName,
             displayName = displayName,
             lastTimeUsed = endTime,
@@ -40,7 +40,7 @@ object MockAppUsageStats {
     /**
      * Generate realistic usage patterns
      */
-    fun generateRealisticScenario(scenarioType: String): List<PatternAgent.AppUsageData> {
+    fun generateRealisticScenario(scenarioType: String): List<UsagePatternDetector.AppUsageData> {
         val now = System.currentTimeMillis()
         
         return when (scenarioType) {
@@ -129,6 +129,122 @@ object MockAppUsageStats {
                 )
             }
             
+            "critical_binge" -> {
+                // 90-minute continuous session (maximum urgency)
+                listOf(
+                    generateUsageStats(
+                        packageName = "com.google.android.youtube",
+                        displayName = "YouTube",
+                        sessionStartTime = now - (90 * 60 * 1000),
+                        sessionDurationMinutes = 90
+                    )
+                )
+            }
+            
+            "extended_morning" -> {
+                // Early morning usage (affects daily routine)
+                val calendar = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, 6)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                }
+                val morningTime = calendar.timeInMillis
+                
+                listOf(
+                    generateUsageStats(
+                        packageName = "com.zhiliaoapp.musically",
+                        displayName = "TikTok",
+                        sessionStartTime = morningTime,
+                        sessionDurationMinutes = 60
+                    )
+                )
+            }
+            
+            "relapse_pattern" -> {
+                // User stopped, started again quickly
+                listOf(
+                    generateUsageStats(
+                        packageName = "com.google.android.youtube",
+                        displayName = "YouTube",
+                        sessionStartTime = now - (60 * 60 * 1000), // 1 hour ago
+                        sessionDurationMinutes = 35
+                    ),
+                    generateUsageStats(
+                        packageName = "com.google.android.youtube",
+                        displayName = "YouTube",
+                        sessionStartTime = now - (10 * 60 * 1000), // 10 min ago (after pause)
+                        sessionDurationMinutes = 15
+                    )
+                )
+            }
+            
+            "weekend_binge" -> {
+                // Extended weekend usage
+                listOf(
+                    generateUsageStats(
+                        packageName = "com.zhiliaoapp.musically",
+                        displayName = "TikTok",
+                        sessionStartTime = now - (60 * 60 * 1000),
+                        sessionDurationMinutes = 60
+                    )
+                )
+            }
+            
+            "low_battery_usage" -> {
+                // User continues despite low battery
+                listOf(
+                    generateUsageStats(
+                        packageName = "com.google.android.youtube",
+                        displayName = "YouTube",
+                        sessionStartTime = now - (50 * 60 * 1000),
+                        sessionDurationMinutes = 50
+                    )
+                )
+            }
+            
+            "work_vs_leisure" -> {
+                // Long Chrome usage (ambiguous - could be work)
+                listOf(
+                    generateUsageStats(
+                        packageName = "com.android.chrome",
+                        displayName = "Chrome",
+                        sessionStartTime = now - (60 * 60 * 1000),
+                        sessionDurationMinutes = 60
+                    )
+                )
+            }
+            
+            "late_night_escalation" -> {
+                // Late night + escalation combination
+                val calendar = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 30)
+                    set(Calendar.SECOND, 0)
+                }
+                val lateNightTime = calendar.timeInMillis
+                
+                listOf(
+                    generateUsageStats(
+                        packageName = "com.zhiliaoapp.musically",
+                        displayName = "TikTok",
+                        sessionStartTime = lateNightTime,
+                        sessionDurationMinutes = 45
+                    )
+                )
+            }
+            
+            "minimal_usage" -> {
+                // Just under threshold (negative test case)
+                listOf(
+                    generateUsageStats(
+                        packageName = "com.google.android.youtube",
+                        displayName = "YouTube",
+                        sessionStartTime = now - (25 * 60 * 1000),
+                        sessionDurationMinutes = 25
+                    )
+                )
+            }
+            
             else -> emptyList()
         }
     }
@@ -141,7 +257,7 @@ object MockAppUsageStats {
         displayName: String,
         startTime: Long,
         endTime: Long
-    ): PatternAgent.AppUsageData {
+    ): UsagePatternDetector.AppUsageData {
         val durationMs = endTime - startTime
         val durationMinutes = (durationMs / (60 * 1000)).toInt()
         

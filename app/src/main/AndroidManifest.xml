@@ -53,6 +53,13 @@
             android:name=".PermissionsActivity"
             android:exported="false"
             android:theme="@style/Theme.MyApplication" />
+        <activity
+            android:name=".ScreenCapturePermissionActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleInstance" />
         <service
             android:name=".core.MainForegroundService"
             android:exported="false"

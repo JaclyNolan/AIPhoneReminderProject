@@ -17,7 +17,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 import com.example.myapplication.agents.ChatManager
-import com.example.myapplication.agents.AnalyzerAgent
+import com.example.myapplication.context.ScreenshotAnalyzer
 import com.example.myapplication.memory.EnhancedMemoryManager
 import com.example.myapplication.PrefsHelper
 import com.example.myapplication.NotificationHelper
@@ -51,6 +51,10 @@ class MainForegroundService : Service() {
                 }
                 ServiceActions.ACTION_STOP_SERVICE -> {
                     Log.d(TAG, "Received stop service request via broadcast")
+                    stopSelf()
+                }
+                Intent.ACTION_SCREEN_OFF -> {
+                    Log.d(TAG, "Screen locked - stopping screenshot service")
                     stopSelf()
                 }
             }
@@ -98,19 +102,12 @@ class MainForegroundService : Service() {
         // Note: Context Providers are stateless objects, no initialization needed
         Log.d(TAG, "Context Providers (AppUsage, Memory, PhoneState, UserPrefs) ready")
 
-        // Schedule periodic warning checks using WorkManager
-        try {
-            WarningCheckWorker.schedulePeriodicCheck(applicationContext)
-            Log.d(TAG, "WarningCheckWorker scheduled for periodic checks")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to schedule WarningCheckWorker", e)
-        }
-
         // Register control broadcasts
         val filter = IntentFilter().apply {
             addAction(ServiceActions.ACTION_PAUSE_SCREENSHOT)
             addAction(ServiceActions.ACTION_RESUME_SCREENSHOT)
             addAction(ServiceActions.ACTION_STOP_SERVICE)
+            addAction(Intent.ACTION_SCREEN_OFF)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             // Use explicit receiver export flag to satisfy platform checks for dynamic receivers
@@ -217,14 +214,6 @@ class MainForegroundService : Service() {
         overlayDialogueController = null
 
         try { unregisterReceiver(controlReceiver) } catch (e: Exception) { Log.w(TAG, "Receiver unregister failed", e) }
-
-        // Cancel warning checks when service stops
-        try {
-            WarningCheckWorker.cancelPeriodicCheck(applicationContext)
-            Log.d(TAG, "WarningCheckWorker cancelled")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to cancel WarningCheckWorker", e)
-        }
 
         Log.d(TAG, "MainForegroundService stopped and cleaned up.")
     }

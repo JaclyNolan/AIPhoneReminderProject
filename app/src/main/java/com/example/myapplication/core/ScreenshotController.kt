@@ -6,7 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import com.example.myapplication.NotificationHelper
 import com.example.myapplication.PrefsHelper
-import com.example.myapplication.agents.AnalyzerAgent
+import com.example.myapplication.context.ScreenshotAnalyzer
 import android.hardware.display.DisplayManager
 import android.media.ImageReader
 import android.media.projection.MediaProjection
@@ -304,7 +304,7 @@ class ScreenshotController(private val context: Context, private val notifier: N
             try {
                 if (prefs.isOpenAIAnalysisEnabled()) {
                     // Use AnalyzerAgent for structured batch processing with 3-frame windows
-                    AnalyzerAgent.enqueueImageBytes(context, imageBytes)
+                    ScreenshotAnalyzer.enqueueImageBytes(context, imageBytes)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to enqueue image bytes for analysis", e)

@@ -16,10 +16,14 @@ object ResponseLogger {
     private const val PREFS_NAME = "response_log_prefs"
     private const val KEY_CHAT_RESPONSES = "chat_responses"
     private const val KEY_ANALYZER_RESPONSES = "analyzer_responses"
+    private const val KEY_UPCP_RESPONSES = "upcp_responses"
+    private const val KEY_PA_RESPONSES = "pa_responses"
 
     enum class LogType {
         CHAT_MANAGER,
-        ANALYZER_AGENT
+        ANALYZER_AGENT,
+        USAGE_PATTERN_CONTEXT_PROVIDER,
+        PERSONALITY_AGENT
     }
 
     data class ResponseEntry(
@@ -65,7 +69,9 @@ object ResponseLogger {
     fun getAll(ctx: Context): List<ResponseEntry> {
         val chatEntries = getByType(ctx, LogType.CHAT_MANAGER)
         val analyzerEntries = getByType(ctx, LogType.ANALYZER_AGENT)
-        return (chatEntries + analyzerEntries).sortedBy { it.timestamp }
+        val upcpEntries = getByType(ctx, LogType.USAGE_PATTERN_CONTEXT_PROVIDER)
+        val paEntries = getByType(ctx, LogType.PERSONALITY_AGENT)
+        return (chatEntries + analyzerEntries + upcpEntries + paEntries).sortedBy { it.timestamp }
     }
 
     /**
@@ -75,6 +81,8 @@ object ResponseLogger {
         val key = when (logType) {
             LogType.CHAT_MANAGER -> KEY_CHAT_RESPONSES
             LogType.ANALYZER_AGENT -> KEY_ANALYZER_RESPONSES
+            LogType.USAGE_PATTERN_CONTEXT_PROVIDER -> KEY_UPCP_RESPONSES
+            LogType.PERSONALITY_AGENT -> KEY_PA_RESPONSES
         }
 
         try {
@@ -116,6 +124,8 @@ object ResponseLogger {
             val key = when (logType) {
                 LogType.CHAT_MANAGER -> KEY_CHAT_RESPONSES
                 LogType.ANALYZER_AGENT -> KEY_ANALYZER_RESPONSES
+                LogType.USAGE_PATTERN_CONTEXT_PROVIDER -> KEY_UPCP_RESPONSES
+                LogType.PERSONALITY_AGENT -> KEY_PA_RESPONSES
             }
             prefs(ctx).edit { putString(key, arr.toString()) }
         } catch (_: Exception) {
@@ -130,6 +140,8 @@ object ResponseLogger {
         prefs(ctx).edit {
             remove(KEY_CHAT_RESPONSES)
             remove(KEY_ANALYZER_RESPONSES)
+            remove(KEY_UPCP_RESPONSES)
+            remove(KEY_PA_RESPONSES)
         }
     }
 
@@ -140,6 +152,8 @@ object ResponseLogger {
         val key = when (logType) {
             LogType.CHAT_MANAGER -> KEY_CHAT_RESPONSES
             LogType.ANALYZER_AGENT -> KEY_ANALYZER_RESPONSES
+            LogType.USAGE_PATTERN_CONTEXT_PROVIDER -> KEY_UPCP_RESPONSES
+            LogType.PERSONALITY_AGENT -> KEY_PA_RESPONSES
         }
         prefs(ctx).edit { remove(key) }
     }

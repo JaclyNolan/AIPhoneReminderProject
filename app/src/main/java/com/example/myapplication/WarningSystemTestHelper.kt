@@ -5,7 +5,7 @@ import android.util.Log
 import java.text.SimpleDateFormat
 import java.util.*
 import com.example.myapplication.agents.ChatManager
-import com.example.myapplication.agents.PatternAgent
+import com.example.myapplication.context.UsagePatternDetector
 import com.example.myapplication.agents.PersonalityAgent
 import com.example.myapplication.memory.EnhancedMemoryManager
 
@@ -75,7 +75,7 @@ object WarningSystemTestHelper {
         EnhancedMemoryManager.initialize(context)
         ChatManager.initialize(context)
         
-        val violation = PatternAgent.checkViolations(context)
+        val violation = UsagePatternDetector.checkViolations(context)
         
         val result = if (violation != null) {
             buildString {
@@ -117,13 +117,15 @@ object WarningSystemTestHelper {
         val activeCharacter = prefs.getActiveCharacter()
         val urgencyThreshold = prefs.getWarningUrgencyThreshold()
         
-        val violation = PatternAgent.checkViolations(context)
+        val violation = UsagePatternDetector.checkViolations(context)
         
         if (violation != null && violation.urgency >= urgencyThreshold) {
             Log.d(TAG, "⚠️ Triggering warning: urgency=${violation.urgency}, threshold=$urgencyThreshold")
             
-            val response = PersonalityAgent.respondToPattern(context, activeCharacter, violation)
-            Log.d(TAG, "Response generated: ${response.take(100)}...")
+            val decision = PersonalityAgent.makeDecision(context, activeCharacter)
+            if (decision.shouldIntervene) {
+                Log.d(TAG, "Response generated: ${decision.response.take(100)}...")
+            }
             
             // Note: Actual UI display (DialogueQueue/Overlay) happens in WarningCheckWorker
             // This just tests the logic without the UI

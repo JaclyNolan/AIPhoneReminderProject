@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.work.*
 import com.example.myapplication.ui.DialogueEntry
 import com.example.myapplication.agents.ChatManager
-import com.example.myapplication.agents.PatternAgent
 import com.example.myapplication.agents.PersonalityAgent
 import com.example.myapplication.memory.EnhancedMemoryManager
 import com.example.myapplication.OverlayDialogueController
@@ -19,13 +18,15 @@ import kotlinx.coroutines.withContext
 /**
  * WarningCheckWorker: Periodic background worker that checks for pattern violations
  * 
- * Runs every 5 minutes (configurable) to detect extended app sessions and other violations.
+ * Runs every 5 minutes (configurable) to check usage patterns and make intervention decisions.
  * Uses WorkManager for battery-efficient, reliable periodic execution.
  * 
- * When a violation is detected:
- * - Checks urgency threshold
- * - Generates character response via PersonalityAgent
- * - Displays appropriate UI (DialogueQueue for 4-6, overlay for 7-10)
+ * Flow:
+ * 1. Requests usage context from UsagePatternContextProvider (cached, auto-refreshes if stale)
+ * 2. PersonalityAgent makes decision with full context (ChatHistory, PhoneState, Memories)
+ * 3. Displays appropriate UI based on intervention type:
+ *    - DIALOGUE_ONLY: DialogueQueue (urgency 4-6)
+ *    - DIALOGUE_WITH_DIMMING: SoftInterventionOverlay (urgency 7-10)
  */
 class WarningCheckWorker(
     context: Context,
@@ -38,71 +39,84 @@ class WarningCheckWorker(
         return try {
             Log.d(TAG, "WarningCheckWorker: Starting violation check")
             
+            // Check if warning system is still enabled (prevents stale WorkManager jobs from executing)
+            val prefs = PrefsHelper(applicationContext)
+            if (!prefs.isWarningSystemEnabled()) {
+                Log.d(TAG, "Warning system disabled - skipping check")
+                return Result.success() // Don't fail, just skip
+            }
+            
             // Initialize managers
             EnhancedMemoryManager.initialize(applicationContext)
             ChatManager.initialize(applicationContext)
             
             // Get active character and threshold
-            val prefs = PrefsHelper(applicationContext)
             val activeCharacter = prefs.getActiveCharacter()
             val urgencyThreshold = prefs.getWarningUrgencyThreshold()
             
-            // Check for violations
-            val violation = PatternAgent.checkViolations(applicationContext)
+            // Make intervention decision (uses UsagePatternContextProvider + PersonalityAgent)
+            val decision = PersonalityAgent.makeDecision(applicationContext, activeCharacter)
             
-            if (violation == null) {
-                Log.d(TAG, "No violations detected")
+            if (!decision.shouldIntervene) {
+                Log.d(TAG, "No intervention needed")
                 return Result.success()
             }
             
-            Log.d(TAG, "Violation detected: ${violation.appName}, urgency=${violation.urgency}, threshold=$urgencyThreshold")
+            Log.d(TAG, "Intervention decision: urgency=${decision.urgency}, type=${decision.interventionType}, threshold=$urgencyThreshold")
             
             // Only proceed if urgency meets threshold
-            if (violation.urgency < urgencyThreshold) {
-                Log.d(TAG, "Violation urgency (${violation.urgency}) below threshold ($urgencyThreshold), skipping")
+            if (decision.urgency < urgencyThreshold) {
+                Log.d(TAG, "Urgency (${decision.urgency}) below threshold ($urgencyThreshold), skipping")
                 return Result.success()
             }
             
-            // Generate character response
-            val response = PersonalityAgent.respondToPattern(
-                applicationContext,
-                activeCharacter,
-                violation
-            )
-            
-            if (response.isBlank()) {
+            if (decision.response.isBlank()) {
                 Log.w(TAG, "PersonalityAgent returned empty response")
                 return Result.success() // Don't fail, just skip this check
             }
             
-            // Display UI based on urgency
+            // Display UI based on intervention type
             withContext(Dispatchers.Main) {
-                when (violation.urgency) {
-                    in 4..6 -> {
+                when (decision.interventionType) {
+                    PersonalityAgent.InterventionType.NONE -> {
+                        Log.d(TAG, "No intervention type specified")
+                    }
+                    PersonalityAgent.InterventionType.DIALOGUE_ONLY -> {
                         // Medium urgency: High-priority dialogue bubble
-                        Log.d(TAG, "Showing high-priority dialogue for urgency ${violation.urgency}")
-                        val entry = DialogueEntry(
-                            speaker = "Ralsei",
-                            text = response,
-                            relativePath = emotionToRelativePath("concerned")
-                        )
+                        Log.d(TAG, "Showing dialogue for urgency ${decision.urgency}")
+                        
+                        // Use structured response if available, otherwise fall back to manual emotion
+                        val entries = if (decision.structuredResponse != null && decision.structuredResponse.isNotEmpty()) {
+                            // Use structured response with emotions from LLM
+                            decision.structuredResponse
+                        } else {
+                            // Fallback: create entry with urgency-based emotion
+                            val emotion = when {
+                                decision.urgency >= 7 -> "concerned"
+                                decision.urgency >= 4 -> "worried"
+                                else -> "normal"
+                            }
+                            listOf(DialogueEntry(
+                                speaker = "Ralsei",
+                                text = decision.response,
+                                relativePath = emotionToRelativePath(emotion)
+                            ))
+                        }
                         // Use enqueueFront to prioritize warnings over commentary
-                        DialogueQueue.enqueueFront(listOf(entry))
+                        DialogueQueue.enqueueFront(entries)
                     }
-                    in 7..10 -> {
-                        // High urgency: Soft intervention overlay
-                        Log.d(TAG, "Showing soft intervention overlay for urgency ${violation.urgency}")
-                        SoftInterventionOverlay.show(applicationContext, response, violation)
-                    }
-                    else -> {
-                        // Low urgency (shouldn't happen due to threshold check above)
-                        Log.d(TAG, "Low urgency violation (${violation.urgency}), showing normal dialogue")
-                        val entry = DialogueEntry(
-                            speaker = "Ralsei",
-                            text = response,
-                            relativePath = emotionToRelativePath("normal")
+                    PersonalityAgent.InterventionType.DIALOGUE_WITH_DIMMING -> {
+                        // High urgency: Soft intervention overlay (need to create violation object for backward compatibility)
+                        Log.d(TAG, "Showing soft intervention overlay for urgency ${decision.urgency}")
+                        // TODO: Update SoftInterventionOverlay to not require PatternViolation
+                        // For now, create minimal violation object
+                        val dummyViolation = com.example.myapplication.context.UsagePatternDetector.PatternViolation(
+                            appName = "Current App",
+                            appDisplayName = "Current App",
+                            urgency = decision.urgency,
+                            context = decision.response
                         )
-                        DialogueQueue.enqueue(listOf(entry))
+                        SoftInterventionOverlay.show(applicationContext, decision.response, dummyViolation)
                     }
                 }
             }
@@ -123,23 +137,33 @@ class WarningCheckWorker(
          * @param context Application context
          */
         fun schedulePeriodicCheck(context: Context) {
+            // Check if warning system is enabled before scheduling
+            val prefs = PrefsHelper(context)
+            if (!prefs.isWarningSystemEnabled()) {
+                Log.d("WarningCheckWorker", "Warning system disabled - not scheduling")
+                return
+            }
+            
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED) // Need network for LLM calls
                 .build()
             
+            // Add initial delay (3 minutes) to prevent immediate execution on app start
             val request = PeriodicWorkRequestBuilder<WarningCheckWorker>(
                 5, java.util.concurrent.TimeUnit.MINUTES
             )
                 .setConstraints(constraints)
+                .setInitialDelay(3, java.util.concurrent.TimeUnit.MINUTES)
                 .build()
             
+            // Use REPLACE to ensure fresh settings are applied
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 "warning_check_work",
-                ExistingPeriodicWorkPolicy.KEEP, // Keep existing schedule if already scheduled
+                ExistingPeriodicWorkPolicy.REPLACE, // Replace existing to update settings
                 request
             )
             
-            Log.d("WarningCheckWorker", "Scheduled periodic warning checks (every 5 minutes)")
+            Log.d("WarningCheckWorker", "Scheduled periodic warning checks (every 5 minutes, initial delay 3 minutes)")
         }
         
         /**

@@ -5,10 +5,37 @@ import android.app.Application
 import android.os.Handler
 import android.os.Looper
 import android.os.Bundle
+import android.util.Log
+import com.example.myapplication.core.WarningCheckWorker
+import com.example.myapplication.context.UsagePatternContextProvider
+import com.example.myapplication.PrefsHelper
 
 class MyApplication : Application() {
+    private val TAG = "MyApplication"
+    
     override fun onCreate() {
         super.onCreate()
+        
+        // Initialize warning system if enabled (independent of screenshot service)
+        try {
+            val prefs = PrefsHelper(this)
+            if (prefs.isWarningSystemEnabled()) {
+                Log.d(TAG, "Warning system enabled - scheduling periodic checks")
+                WarningCheckWorker.schedulePeriodicCheck(this)
+            } else {
+                Log.d(TAG, "Warning system disabled - not scheduling")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to initialize warning system", e)
+        }
+        
+        // Clear stale usage pattern cache on app start to prevent immediate warnings
+        try {
+            UsagePatternContextProvider.clearCache(this)
+            Log.d(TAG, "Cleared usage pattern cache on app start")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to clear usage pattern cache", e)
+        }
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             // Track number of started activities so we can detect when the app goes to background
             private var startedCount = 0

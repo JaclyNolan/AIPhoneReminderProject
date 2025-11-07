@@ -88,4 +88,27 @@ class PrefsHelper(context: Context) {
     fun setWarningUrgencyThreshold(threshold: Int) {
         prefs.edit { putInt("warning_urgency_threshold", threshold.coerceIn(0, 10)) }
     }
+
+    // Warning system enabled/disabled toggle
+    fun isWarningSystemEnabled(): Boolean = prefs.getBoolean("warning_system_enabled", true)
+    fun setWarningSystemEnabled(enabled: Boolean) = prefs.edit { putBoolean("warning_system_enabled", enabled) }
+
+    // Floating control overlay visibility
+    fun isFloatingOverlayVisible(): Boolean = prefs.getBoolean("floating_overlay_visible", true)
+    fun setFloatingOverlayVisible(visible: Boolean) = prefs.edit { putBoolean("floating_overlay_visible", visible) }
+
+    // Floating control overlay position
+    fun getFloatingOverlayPositionX(): Int = prefs.getInt("floating_overlay_position_x", 0)
+    fun getFloatingOverlayPositionY(): Int = prefs.getInt("floating_overlay_position_y", 0)
+    fun setFloatingOverlayPosition(x: Int, y: Int) = prefs.edit {
+        putInt("floating_overlay_position_x", x)
+        putInt("floating_overlay_position_y", y)
+    }
+
+    // Flag to request screenshot permission from overlay
+    fun shouldRequestScreenshotPermission(): Boolean = prefs.getBoolean("request_screenshot_permission", false)
+    fun setRequestScreenshotPermission(request: Boolean) = prefs.edit { putBoolean("request_screenshot_permission", request) }
+
+    // Expose SharedPreferences for custom operations
+    fun getSharedPreferences(): SharedPreferences = prefs
 }

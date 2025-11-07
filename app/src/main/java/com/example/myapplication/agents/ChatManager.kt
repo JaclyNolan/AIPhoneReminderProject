@@ -75,18 +75,27 @@ You occasionally show excitement ("Wow, Kris!") and always try to teach or help.
 - You will also receive your own memories as text with the role "system".
 - You will receive a developer payload with: batch_summary, recent_memories, recent_intents, timeline_buffer, trend_summary.
 
+[MULTI-TASK PROCESSING]
+Perform TWO tasks sequentially:
+
+[TASK 1: MEMORY ANALYSIS]
+1. Review existing memories (check for duplicates within last 30 minutes)
+2. Evaluate latest context for significance:
+   - Significant: User emotions, behavior patterns, relationship moments
+   - NOT significant: Trivial observations, mundane details
+3. Set new_memory_entry: Create concise text if significant AND not duplicate, else null
+
+[TASK 2: COMMENT DECISION]
+1. Use Task 1 memory context (significant memory may affect decision)
+2. Check recent_intents for repetition (last 30 minutes)
+3. Calculate decision_score using formula below
+4. Compare against thresholds → determine response_type
+5. Generate response if threshold met, else null
+
 [RULES]
 - Say what Ralsei will be thinking in the "thinking" section in the json response
 - Prefer to use many emotions in a single response when appropriate.
-- Save memories of important events, feelings, and facts about the user and yourself.
-- The decision_score determines whether to respond and the length/detail of your response.
 - The "thinking" field inside each response item is Ralsei's emotional reflection or momentary thought, often gentle or personal.
-- If you want to save a memory, set new_memory_entry to a concise summary of the event or fact being remembered.
-- If not saving a memory, set new_memory_entry to null.
-- Ensure memory entries are not duplicates of recently saved memories (within the last 30 minutes).
-- Ensure memory entries are relevant and significant to the ongoing conversation or relationship.
-- Ensure memory entries are not trivial or mundane (e.g., "saw a tree").
-- ALWAYS perform MEMORY CONTEXT REASONING before responding.
 - Check recent_intents for similar intent within last 30 minutes and reduce DecisionScore accordingly.
 - If you've already responded with similar intent recently, prefer staying quiet or use micro_observe.
 - DO NOT use action descriptions like "*softly adjusts scarf*" or "*fidgets*" - use ONLY plain dialogue text.
@@ -95,57 +104,38 @@ You occasionally show excitement ("Wow, Kris!") and always try to teach or help.
 CRITICAL: Return RAW JSON ONLY. DO NOT wrap in markdown code blocks (```json). DO NOT include any text before or after the JSON object.
 
 [RESPONSE TYPE LOGIC]
-After calculating decision_score, you MUST compare it with the thresholds to determine response_type.
+Thresholds: short=$shortThreshold, long=$longThreshold
 
-Threshold values for this session:
-- shortThreshold = $shortThreshold
-- longThreshold = $longThreshold
+Compare decision_score to thresholds:
+- < shortThreshold → response_type="none", response=null
+- shortThreshold ≤ score < longThreshold → response_type="short"
+- ≥ longThreshold → response_type="long"
 
-CRITICAL: In the response_type field, you MUST write a natural language explanation using the ACTUAL decision_score value.
+CRITICAL: Use standard mathematical comparison (not colloquial "below"). Higher numbers mean more likely to respond.
+- If shortThreshold = -1.0 and decision_score = -0.01, then -0.01 > -1.0, so -0.01 is ABOVE the threshold (use "short" or "long" response).
+- If shortThreshold = -1.0 and decision_score = -1.5, then -1.5 < -1.0, so -1.5 is BELOW the threshold (use "none" response).
+- Remember: -0.01 is numerically GREATER than -1.0, even though it's a smaller negative number.
 
-Comparison logic with examples:
-1. If decision_score < $shortThreshold: response_type = "none", response = null
-   Example: If decision_score is -1.5 and shortThreshold is -1.0:
-   "Score -1.5 is below short threshold (-1.0): no response"
+Format: "Score [actual_value] is above/below [short_threshold_name]. Score [actual_value] is above/below [long_threshold_name].  ([threshold_value]): [none/short/long] response"
 
-2. If $shortThreshold ≤ decision_score < $longThreshold: response_type = "short", provide brief response
-   Example: If decision_score is 0.35, shortThreshold is -1.0, longThreshold is 0.71:
-   "Score 0.35 is above short threshold (-1.0), below long threshold (0.71): short response"
-
-3. If decision_score ≥ $longThreshold: response_type = "long", provide detailed response
-   Example: If decision_score is 0.85 and longThreshold is 0.71:
-   "Score 0.85 is above long threshold (0.71): long response"
-
-CRITICAL: Always write in plain English using the ACTUAL numeric value of your calculated decision_score!
-
-Return JSON in this exact format:
+Return JSON format:
 {
-  "calculation": {
-    "user_activity_weight": {
-        "score": "number",
-        "reasons": "concise string"
-    },
-    "emotional_resonance": {
-        "score": "number",
-        "reasons": "concise string"
-    },
-    "ralsei_activity_importance": {
-        "score": "number"
-    },
-    "repeat_penalty": {
-        "score": "number",
-        "reasons": "concise string"
-    },
-    "final_calculation": "(UserActivityWeight × 0.7) + (EmotionalResonance × 0.6) − (RalseiActivityImportance × 0.2) + RepeatPenalty"
+  "memory_analysis": {
+    "new_memory_entry": "string or null"
   },
-  "response_type": "Score [actual_value] is above/below [threshold_name] ([threshold_value]): [none/short/long] response",
-  "decision_score": "number",
-  "new_memory_entry": "string or null",
-  "intent_category": "string (comfort/encouragement/curiosity/concern/observation/teaching/playful/companionship/micro_observe)",
-  "response": [
-        { "thinking": "string", "text": "string", "emotion": "surprise&worry"},
-        { "thinking": "string", "text": "string", "emotion": "worry"}
-   ] or null
+  "comment_decision": {
+    "calculation": {
+      "user_activity_weight": {"score": number, "reasons": "concise string"},
+      "emotional_resonance": {"score": number, "reasons": "concise string"},
+      "ralsei_activity_importance": {"score": number},
+      "repeat_penalty": {"score": number, "reasons": "concise string"},
+      "final_calculation": "formula string"
+    },
+    "decision_score": number,
+    "response_type": "Score [value] is above/below [threshold]: [none/short/long] response",
+    "intent_category": "comfort/encouragement/curiosity/concern/observation/teaching/playful/companionship/micro_observe"
+  },
+  "response": [{ "thinking": "string", "text": "string", "emotion": "string"}] or null
 }
 
 [EMOTION RULE]
@@ -307,27 +297,59 @@ Always include intent_category in your response for tracking purposes.
             val trimmed = reply.trim()
             val obj = JSONObject(trimmed)
 
-            // Check decision_score against threshold
-            if (obj.has("decision_score")) {
-                val decisionScore = obj.optDouble("decision_score", Double.NaN)
-                if (!decisionScore.isNaN() && decisionScore >= shortThreshold) {
-                    return true
+            // Check for new nested structure first (multi-task format)
+            if (obj.has("comment_decision") && obj.has("memory_analysis")) {
+                // New multi-task structure
+                val commentDecision = obj.optJSONObject("comment_decision")
+                val memoryAnalysis = obj.optJSONObject("memory_analysis")
+                
+                // Check decision_score against threshold
+                if (commentDecision != null && commentDecision.has("decision_score")) {
+                    val decisionScore = commentDecision.optDouble("decision_score", Double.NaN)
+                    if (!decisionScore.isNaN() && decisionScore >= shortThreshold) {
+                        return true
+                    }
                 }
-            }
-
-            // Check if there's a memory to save
-            if (obj.has("new_memory_entry")) {
-                val memoryEntry = obj.optString("new_memory_entry", "")
-                if (memoryEntry.isNotBlank() && memoryEntry != "null") {
-                    return true
+                
+                // Check if there's a memory to save
+                if (memoryAnalysis != null && memoryAnalysis.has("new_memory_entry")) {
+                    val memoryEntry = memoryAnalysis.optString("new_memory_entry", "")
+                    if (memoryEntry.isNotBlank() && memoryEntry != "null") {
+                        return true
+                    }
                 }
-            }
+                
+                // If it has a 'response' array with content, assume store
+                if (obj.has("response")) {
+                    val responseArray = obj.optJSONArray("response")
+                    if (responseArray != null && responseArray.length() > 0) {
+                        return true
+                    }
+                }
+            } else {
+                // Backward compatibility: check for old flat structure
+                // Check decision_score against threshold
+                if (obj.has("decision_score")) {
+                    val decisionScore = obj.optDouble("decision_score", Double.NaN)
+                    if (!decisionScore.isNaN() && decisionScore >= shortThreshold) {
+                        return true
+                    }
+                }
 
-            // If it has a 'response' array with content, assume store
-            if (obj.has("response")) {
-                val responseArray = obj.optJSONArray("response")
-                if (responseArray != null && responseArray.length() > 0) {
-                    return true
+                // Check if there's a memory to save
+                if (obj.has("new_memory_entry")) {
+                    val memoryEntry = obj.optString("new_memory_entry", "")
+                    if (memoryEntry.isNotBlank() && memoryEntry != "null") {
+                        return true
+                    }
+                }
+
+                // If it has a 'response' array with content, assume store
+                if (obj.has("response")) {
+                    val responseArray = obj.optJSONArray("response")
+                    if (responseArray != null && responseArray.length() > 0) {
+                        return true
+                    }
                 }
             }
         } catch (_: Exception) {
@@ -378,11 +400,22 @@ Always include intent_category in your response for tracking purposes.
 
     // Helper: Extract decision_score from structured JSON response
     // Returns the decision_score value, or null if not present or not a valid number
+    // Supports both new multi-task format (nested) and old format (flat) for backward compatibility
     private fun extractDecisionScore(reply: String?): Double? {
         if (reply.isNullOrBlank()) return null
         try {
             val trimmed = reply.trim()
             val obj = JSONObject(trimmed)
+            
+            // Check for new nested structure first (multi-task format)
+            if (obj.has("comment_decision")) {
+                val commentDecision = obj.optJSONObject("comment_decision")
+                if (commentDecision != null && commentDecision.has("decision_score")) {
+                    return commentDecision.optDouble("decision_score", Double.NaN).takeIf { !it.isNaN() }
+                }
+            }
+            
+            // Backward compatibility: check for old flat structure
             if (obj.has("decision_score")) {
                 return obj.optDouble("decision_score", Double.NaN).takeIf { !it.isNaN() }
             }
@@ -792,36 +825,52 @@ Always include intent_category in your response for tracking purposes.
 
     /**
      * Extract intent_category from response JSON and store in EnhancedMemoryManager
+     * Supports both new multi-task format (nested) and old format (flat) for backward compatibility
      */
     private fun extractAndStoreIntent(ctx: Context, reply: String) {
         try {
             val obj = JSONObject(reply.trim())
-            if (obj.has("intent_category") && obj.has("response")) {
-                val intentCategory = obj.optString("intent_category", "")
-                val responseArray = obj.optJSONArray("response")
+            
+            // Check for new nested structure first (multi-task format)
+            var intentCategory: String? = null
+            var responseArray: JSONArray? = null
+            
+            if (obj.has("comment_decision") && obj.has("response")) {
+                // New multi-task structure
+                val commentDecision = obj.optJSONObject("comment_decision")
+                if (commentDecision != null && commentDecision.has("intent_category")) {
+                    intentCategory = commentDecision.optString("intent_category", "")
+                }
+                responseArray = obj.optJSONArray("response")
+            } else if (obj.has("intent_category") && obj.has("response")) {
+                // Backward compatibility: old flat structure
+                intentCategory = obj.optString("intent_category", "")
+                responseArray = obj.optJSONArray("response")
+            }
 
-                if (intentCategory.isNotBlank() && responseArray != null && responseArray.length() > 0) {
-                    // Calculate response length
-                    var totalLength = 0
-                    for (i in 0 until responseArray.length()) {
-                        val item = responseArray.optJSONObject(i)
-                        if (item != null) {
-                            val text = item.optString("text", "")
-                            totalLength += text.length
-                        }
-                    }
+            if (intentCategory.isNullOrBlank() || responseArray == null || responseArray.length() == 0) {
+                return
+            }
 
-                    // Heuristic: if response is very short, ignore intent saving (avoid noise)
-                    if (totalLength < 10) {
-                        Log.d(TAG, "Response too short, skipping intent saving")
-                        return
-                    }
-
-                    // Save the intent category with current timestamp
-                    EnhancedMemoryManager.addRecentIntent(ctx, intentCategory, intentCategory)
-                    Log.d(TAG, "Intent category saved: $intentCategory")
+            // Calculate response length
+            var totalLength = 0
+            for (i in 0 until responseArray.length()) {
+                val item = responseArray.optJSONObject(i)
+                if (item != null) {
+                    val text = item.optString("text", "")
+                    totalLength += text.length
                 }
             }
+
+            // Heuristic: if response is very short, ignore intent saving (avoid noise)
+            if (totalLength < 10) {
+                Log.d(TAG, "Response too short, skipping intent saving")
+                return
+            }
+
+            // Save the intent category with current timestamp
+            EnhancedMemoryManager.addRecentIntent(ctx, intentCategory, intentCategory)
+            Log.d(TAG, "Intent category saved: $intentCategory")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to extract/store intent", e)
         }

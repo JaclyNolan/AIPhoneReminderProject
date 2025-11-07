@@ -1,4 +1,4 @@
-package com.example.myapplication.agents
+package com.example.myapplication.context
 
 import android.content.Context
 import android.util.Log
@@ -8,17 +8,21 @@ import com.example.myapplication.memory.EnhancedMemoryManager
 import java.text.SimpleDateFormat
 import java.util.*
 
-// Import ChatManager from same package
+// Import ChatManager from agents package
 import com.example.myapplication.agents.ChatManager
 
 /**
- * PatternAgent: Rule-based pattern detection for screen time violations
+ * UsagePatternDetector: Rule-based pattern detection for screen time violations
  * 
+ * Context processor that analyzes usage data to detect behavioral patterns.
  * Detects extended app sessions, excessive app switching, and other behavioral patterns
  * that might indicate problematic usage. Uses rule-based logic (not LLM) for fast,
  * deterministic detection.
  * 
- * Now uses modular context providers for data access:
+ * This is NOT a decision-making agent - it only detects patterns and provides
+ * structured violation data for agents to act upon.
+ * 
+ * Uses modular context providers for data access:
  * - AppUsageContextProvider for app usage stats
  * - MemoryContextProvider for scene timeline and chat history
  * 
@@ -30,8 +34,8 @@ import com.example.myapplication.agents.ChatManager
  * - User-defined time limits per app
  * - Time-of-day restrictions
  */
-object PatternAgent {
-    private const val TAG = "PatternAgent"
+object UsagePatternDetector {
+    private const val TAG = "UsagePatternDetector"
     
     // ISO timestamp format used by EnhancedMemoryManager
     private val isoDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
@@ -51,7 +55,7 @@ object PatternAgent {
      * - User-defined bad behaviors
      * - Recent screen summaries
      */
-    data class PatternAgentContext(
+    data class PatternDetectorContext(
         val appUsageStats: List<AppUsageData>,
         val chatHistory: List<ChatManager.ChatMessage>,
         val userDefinedBehaviors: List<UserBadBehavior>,
@@ -98,7 +102,7 @@ object PatternAgent {
      * @param rawContext Optional raw context with all data sources. If null, auto-populates from context providers
      * @return PatternViolation if detected, null otherwise
      */
-    fun checkViolations(ctx: Context, rawContext: PatternAgentContext? = null): PatternViolation? {
+    fun checkViolations(ctx: Context, rawContext: PatternDetectorContext? = null): PatternViolation? {
         // Use context providers to gather data
         val context = rawContext ?: run {
             EnhancedMemoryManager.initialize(ctx)
@@ -112,7 +116,7 @@ object PatternAgent {
             // Convert existing SceneTimeline to AppUsageData format
             val appUsageStats = convertSceneTimelineToAppUsage(sceneTimeline)
             
-            PatternAgentContext(
+            PatternDetectorContext(
                 appUsageStats = appUsageStats,
                 chatHistory = chatHistory,
                 userDefinedBehaviors = emptyList(), // TODO: Load from SharedPreferences via provider

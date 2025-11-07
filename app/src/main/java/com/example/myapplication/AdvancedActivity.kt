@@ -30,6 +30,7 @@ class AdvancedActivity : ComponentActivity() {
                 var shortResponseThreshold by rememberSaveable { mutableStateOf(prefs.getShortResponseThreshold()) }
                 var longResponseThreshold by rememberSaveable { mutableStateOf(prefs.getLongResponseThreshold()) }
                 var warningUrgencyThreshold by rememberSaveable { mutableStateOf(prefs.getWarningUrgencyThreshold()) }
+                var isWarningSystemEnabled by rememberSaveable { mutableStateOf(prefs.isWarningSystemEnabled()) }
 
                 AdvancedScreen(
                     interval = interval,
@@ -44,6 +45,7 @@ class AdvancedActivity : ComponentActivity() {
                     shortResponseThreshold = shortResponseThreshold,
                     longResponseThreshold = longResponseThreshold,
                     warningUrgencyThreshold = warningUrgencyThreshold,
+                    isWarningSystemEnabled = isWarningSystemEnabled,
                     onIntervalChange = { newInterval ->
                         interval = newInterval
                         prefs.setInterval(newInterval)
@@ -87,6 +89,15 @@ class AdvancedActivity : ComponentActivity() {
                     onWarningUrgencyThresholdChange = { threshold ->
                         warningUrgencyThreshold = threshold
                         prefs.setWarningUrgencyThreshold(threshold)
+                    },
+                    onWarningSystemEnabledChange = { enabled ->
+                        isWarningSystemEnabled = enabled
+                        prefs.setWarningSystemEnabled(enabled)
+                        if (enabled) {
+                            com.example.myapplication.core.WarningCheckWorker.schedulePeriodicCheck(ctx)
+                        } else {
+                            com.example.myapplication.core.WarningCheckWorker.cancelPeriodicCheck(ctx)
+                        }
                     },
                     onClose = {
                         // Indicate that preferences may have changed so caller can refresh (e.g., autoAdvance)

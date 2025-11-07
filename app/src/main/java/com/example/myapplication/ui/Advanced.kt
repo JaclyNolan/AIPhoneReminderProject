@@ -6,10 +6,19 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import com.example.myapplication.context.UserBadBehaviorContextProvider
 import com.example.myapplication.testing.DebugActivity
 import java.util.Locale
 
@@ -38,6 +47,7 @@ fun AdvancedScreen(
     shortResponseThreshold: Float,
     longResponseThreshold: Float,
     warningUrgencyThreshold: Int,
+    isWarningSystemEnabled: Boolean,
     onIntervalChange: (Long) -> Unit,
     onScaleChange: (Float) -> Unit,
     onQualityChange: (Int) -> Unit,
@@ -49,6 +59,7 @@ fun AdvancedScreen(
     onShortResponseThresholdChange: (Float) -> Unit,
     onLongResponseThresholdChange: (Float) -> Unit,
     onWarningUrgencyThresholdChange: (Int) -> Unit,
+    onWarningSystemEnabledChange: (Boolean) -> Unit,
     onClose: () -> Unit
 ) {
     val scrollState = rememberScrollState()
@@ -232,6 +243,18 @@ fun AdvancedScreen(
                 }
             }
             
+            // Personal Habits Section
+            SettingsSection(title = "Personal Habits") {
+                Text(
+                    text = "Tell Ralsei about habits you want help with. Ralsei will reference these when warning you.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                
+                BadHabitsList()
+            }
+            
             // Warning System Settings Section
             SettingsSection(title = "Warning System") {
                 Text(
@@ -241,40 +264,48 @@ fun AdvancedScreen(
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
 
-                SliderSetting(
-                    label = "Warning urgency threshold: $warningUrgencyThreshold",
-                    description = "Minimum urgency (0-10) to trigger warnings. Lower values = more sensitive.",
-                    value = warningUrgencyThreshold.toFloat(),
-                    onValueChange = { onWarningUrgencyThresholdChange(it.toInt()) },
-                    valueRange = 0f..10f,
-                    steps = 10
+                ToggleSetting(
+                    label = "Enable warning system",
+                    checked = isWarningSystemEnabled,
+                    onCheckedChange = onWarningSystemEnabledChange
                 )
 
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                if (isWarningSystemEnabled) {
+                    SliderSetting(
+                        label = "Warning urgency threshold: $warningUrgencyThreshold",
+                        description = "Minimum urgency (0-10) to trigger warnings. Lower values = more sensitive.",
+                        value = warningUrgencyThreshold.toFloat(),
+                        onValueChange = { onWarningUrgencyThresholdChange(it.toInt()) },
+                        valueRange = 0f..10f,
+                        steps = 10
                     )
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp)
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                        )
                     ) {
-                        Text(
-                            text = "ℹ️ Warning Levels",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "• 0-3: No warning\n" +
-                                   "• 4-6: Dialogue bubble (high priority)\n" +
-                                   "• 7-10: Soft intervention overlay\n" +
-                                   "• Current threshold: $warningUrgencyThreshold (warnings at ${warningUrgencyThreshold}+)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer
-                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = "ℹ️ Warning Levels",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "• 0-3: No warning\n" +
+                                       "• 4-6: Dialogue bubble (high priority)\n" +
+                                       "• 7-10: Soft intervention overlay\n" +
+                                       "• Current threshold: $warningUrgencyThreshold (warnings at ${warningUrgencyThreshold}+)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
                     }
                 }
                 
@@ -413,6 +444,158 @@ private fun SliderSetting(
             valueRange = valueRange,
             steps = steps,
             enabled = enabled
+        )
+    }
+}
+
+@Composable
+private fun BadHabitsList() {
+    val context = LocalContext.current
+    var habits by remember { mutableStateOf<List<UserBadBehaviorContextProvider.UserBadBehavior>>(emptyList()) }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var newHabitText by remember { mutableStateOf("") }
+    
+    // Load habits on first render
+    LaunchedEffect(Unit) {
+        habits = UserBadBehaviorContextProvider.getBadBehaviors(context)
+    }
+    
+    // List existing habits
+    if (habits.isEmpty()) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Text(
+                text = "No habits defined yet. Add one to get started!",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(16.dp)
+            )
+        }
+    } else {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            habits.forEach { habit ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = habit.description,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        
+                        IconButton(
+                            onClick = {
+                                val updated = habits.filter { it.id != habit.id }
+                                UserBadBehaviorContextProvider.saveBadBehaviors(context, updated)
+                                habits = updated
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Add button
+    Spacer(modifier = Modifier.height(8.dp))
+    Button(
+        onClick = { showAddDialog = true },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Icon(
+            imageVector = Icons.Default.Add,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("Add Habit")
+    }
+    
+    // Add dialog
+    if (showAddDialog) {
+        AlertDialog(
+            onDismissRequest = { 
+                showAddDialog = false
+                newHabitText = ""
+            },
+            title = { Text("Add Personal Habit") },
+            text = {
+                Column {
+                    Text(
+                        text = "Describe a habit you want Ralsei to help you with. For example:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Text(
+                        text = "• \"YouTube Shorts makes me lose sleep\"\n" +
+                               "• \"I scroll Instagram when I'm stressed\"\n" +
+                               "• \"I stay up too late on TikTok\"",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    OutlinedTextField(
+                        value = newHabitText,
+                        onValueChange = { newHabitText = it },
+                        label = { Text("Habit description") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = false,
+                        maxLines = 3
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newHabitText.isNotBlank()) {
+                            UserBadBehaviorContextProvider.addBadBehavior(
+                                context,
+                                newHabitText.trim()
+                            )
+                            habits = UserBadBehaviorContextProvider.getBadBehaviors(context)
+                            newHabitText = ""
+                            showAddDialog = false
+                        }
+                    },
+                    enabled = newHabitText.isNotBlank()
+                ) {
+                    Text("Add")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { 
+                        showAddDialog = false
+                        newHabitText = ""
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 }

@@ -23,7 +23,7 @@ object SoftInterventionTool {
     fun activate(
         context: Context,
         message: String,
-        violation: com.example.myapplication.agents.PatternAgent.PatternViolation
+        violation: com.example.myapplication.context.UsagePatternDetector.PatternViolation
     ) {
         if (violation.urgency < 7) {
             Log.w(TAG, "Soft intervention typically used for urgency >= 7. Got urgency=${violation.urgency}")
@@ -69,7 +69,7 @@ object SoftInterventionTool {
     fun activateIfUrgent(
         context: Context,
         message: String,
-        violation: com.example.myapplication.agents.PatternAgent.PatternViolation,
+        violation: com.example.myapplication.context.UsagePatternDetector.PatternViolation,
         threshold: Int = 7
     ): Boolean {
         return if (violation.urgency >= threshold) {
