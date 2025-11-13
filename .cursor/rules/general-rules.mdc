@@ -19,95 +19,7 @@ After editing Kotlin/Java source files, manifest, or Gradle files:
 
 ## Architecture Overview
 
-**Dual-Pipeline System**: Commentary Bot (Phase 1) + Warning System (Phase 2)
-
-### Phase 1: Commentary Bot (✅ Complete)
-```
-Screenshot → Vision Analysis → Memory Storage → DecisionScore → Optional Dialogue
-```
-
-- **ScreenshotController**: Persistent `VirtualDisplay` created ONCE at service start, reused for all captures
-- **AnalyzerAgent**: Batches 3 screenshots → OpenAI Vision API → structured JSON with safety flags
-- **EnhancedMemoryManager**: Four-tier memory (SceneTimeline, CondensedMemories, RecentIntents, DialogueSummaries)
-- **ChatManager**: DecisionScore formula `(ActivityWeight × 0.5) + (EmotionalResonance × 0.4) − (RalseiActivity × 0.2) + RepeatPenalty`
-  - Quiet: <0.5, Short: 0.5-0.7, Long: ≥0.7
-- **OverlayDialogueController**: System overlay with emotion-based portraits (`portrait/ralsei/{emotion}.png`)
-
-### Phase 2: Warning System (✅ Core Complete)
-```
-Periodic Check (5min) → Pattern Detection → Character Response → UI Display
-```
-
-- **WarningCheckWorker**: WorkManager periodic checks (battery-efficient)
-- **PatternAgent**: Rule-based detection (30+ min sessions → urgency 0-10)
-- **PersonalityAgent**: LLM responses using `CharacterProfiles` personality + urgency examples
-- **LLMClient**: Shared API client (Mistral/OpenAI) with token tracking
-- **SoftInterventionOverlay**: Screen dimming for urgency ≥7 (🚧 stub exists, needs implementation)
-
-**Shared State**: Both systems write to `ChatManager.history` with `source` field: `"commentary"` | `"warning"` | `"user"` | `"assistant"`
-
-## Critical Development Patterns
-
-### 1. Preference Synchronization ⚠️
-```kotlin
-// ALWAYS update BOTH Compose state AND SharedPreferences
-imageScale = newScale          // Compose UI state
-prefs.setImageScale(newScale)  // Persist to SharedPreferences
-```
-**Why**: Service and UI have separate lifecycles. Missing persistence → silent desyncs.
-
-### 2. Persistent VirtualDisplay Pattern ⚠️
-```kotlin
-// Created ONCE in startProjection() - NEVER recreate
-if (persistentDisplayCreated) return  // Guard
-
-fun takeScreenshot() {
-    val image = currentImageReader?.acquireLatestImage()  // Reuse existing
-}
-```
-**Why**: Recreation takes ~2s and prompts MediaProjection permission dialog.
-
-### 3. Singleton Initialization ⚠️
-```kotlin
-// MUST run in MainForegroundService.onCreate() BEFORE screenshot loop
-ChatManager.initialize(applicationContext)
-EnhancedMemoryManager.initialize(applicationContext)
-```
-**Why**: Services outlive Activities. Initialize once at service startup, not per-Activity.
-
-### 4. Thread Safety Patterns
-```kotlin
-// Services use IO dispatcher + SupervisorJob
-private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
-// UI updates require Main dispatcher
-withContext(Dispatchers.Main) { updateUI() }
-
-// Atomic flags prevent race conditions
-private val flushing = AtomicBoolean(false)
-if (!flushing.compareAndSet(false, true)) return
-```
-
-### 5. LLM API Integration
-```kotlin
-// All LLM calls use shared LLMClient
-val messages = listOf(
-    LLMClient.Message("system", systemPrompt),
-    LLMClient.Message("user", userPrompt)
-)
-val response = LLMClient.callOpenAI(context, messages, model = "mistral-medium-latest")
-// Response includes: content, promptTokens, completionTokens, totalTokens
-```
-
-### 6. Testing with Mock LLM
-```kotlin
-// Use LLMClientFactory for testability
-LLMClientFactory.setMockMode(true)  // Enable deterministic responses
-val client = LLMClientFactory.getClient()  // Returns MockLLMClient or RealLLMClient
-val response = client.callOpenAI(context, messages)
-
-// Test scenarios: TestAgent.runScenario(context, scenario, clearFirst = true)
-```
+Check root/README.md for the latest architecture
 
 ## Common Workflows
 
@@ -144,58 +56,6 @@ adb shell appops get com.example.myapplication SYSTEM_ALERT_WINDOW
 adb shell pm grant com.example.myapplication android.permission.SYSTEM_ALERT_WINDOW
 ```
 
-## Key Components
-
-| Component | Purpose | File |
-|-----------|---------|------|
-| `MainForegroundService` | Orchestrates screenshot loop, initializes singletons | `MainForegroundService.kt` |
-| `ScreenshotController` | Persistent VirtualDisplay, MediaProjection | `ScreenshotController.kt` |
-| `AnalyzerAgent` | Batch 3-frame Vision API processing | `AnalyzerAgent.kt` |
-| `ChatManager` | DecisionScore calculation, conversation history | `ChatManager.kt` |
-| `EnhancedMemoryManager` | Four-tier memory architecture | `EnhancedMemoryManager.kt` |
-| `PatternAgent` | Rule-based violation detection | `PatternAgent.kt` |
-| `PersonalityAgent` | Character-aware LLM responses | `PersonalityAgent.kt` |
-| `WarningCheckWorker` | WorkManager periodic checks | `WarningCheckWorker.kt` |
-| `LLMClient` | Shared Mistral/OpenAI API client | `LLMClient.kt` |
-| `CharacterProfiles` | Ralsei personality + urgency examples | `CharacterProfiles.kt` |
-| `TestAgent` | Test scenario orchestration | `testing/TestAgent.kt` |
-| `MockLLMClient` | Deterministic test responses | `testing/MockLLMClient.kt` |
-| `PrefsHelper` | Centralized SharedPreferences | `PrefsHelper.kt` |
-| `MyApplication` | Activity lifecycle tracking for exclusions | `MyApplication.kt` |
-
-## Data Structures
-
-### Timestamp Formats
-- **SceneTimeline**: ISO 8601 (`yyyy-MM-dd'T'HH:mm:ssXXX`)
-- **ChatMessage**: Simple (`yyyy-MM-dd HH:mm:ss`)
-
-### PatternViolation
-```kotlin
-data class PatternViolation(
-    val appName: String,         // e.g., "YouTube"
-    val appDisplayName: String,  // Same as appName (extensible)
-    val urgency: Int,            // 0-10 scale
-    val context: String          // Natural language for LLM
-)
-```
-
-## Common Gotchas
-
-1. **Forgetting singleton initialization**: Initialize `ChatManager` and `EnhancedMemoryManager` in `MainForegroundService.onCreate()`, not Activity
-2. **UI updates from IO thread**: Always `withContext(Dispatchers.Main)` for UI changes
-3. **Recreating VirtualDisplay**: Reuse `currentImageReader`, never call `setupPersistentVirtualDisplay()` twice
-4. **Preference desync**: Update both Compose state AND SharedPreferences
-5. **Race conditions**: Use `AtomicBoolean` for concurrent operations (e.g., `AnalyzerAgent.flushing`)
-6. **Hardcoded emotion paths**: Use `emotionToRelativePath(emotion)` for dynamic asset mapping
-
-## Code Conventions
-
-- **Singletons**: Use `object` for stateless components (`AnalyzerAgent`, `ChatManager`, `EnhancedMemoryManager`)
-- **Async**: Prefer `suspend fun` over callbacks
-- **Data**: Use `data class` for structured data (`PatternViolation`, `ChatMessage`, `TestResult`)
-- **Logging**: `private const val TAG = "ClassName"`, levels: DEBUG (flow) / WARN (recoverable) / ERROR (exceptions)
-- **Error handling**: Prefer nullable returns over exceptions for expected failures
-
 ## API Key Configuration
 
 Resolution chain (first found wins):
@@ -215,10 +75,6 @@ LLMClientFactory.setMockMode(true)
 TestAgent.runScenario(context, scenario, clearFirst = true)
 TestAgent.runAllScenarios(context)  // Full test suite
 
-// Expected outcomes:
-// - First offense (30min) → urgency 2-3
-// - Escalation (45min + warning) → urgency 5-7
-// - Critical (60min + multiple) → urgency 8-10
 ```
 
 ## Activity Exclusions
@@ -227,19 +83,3 @@ TestAgent.runAllScenarios(context)  // Full test suite
 - `MainActivity`, `ChatActivity`, `AdvancedActivity`, `MemoryLogActivity`, `ResponseLogActivity`, `DebugActivity`
 
 Implementation: `MainForegroundService` checks `MyApplication.isExcludedActivity()` before each screenshot.
-
-## Tech Stack
-
-- **Min SDK**: API 24 (Android 7.0) | **Target SDK**: API 36 (Android 14)
-- **Kotlin**: 2.0.21 | **AGP**: 8.12.3 | **Java**: 11
-- **Jetpack**: Compose (Material3), Coroutines, WorkManager
-- **No external libs**: Uses stdlib `HttpURLConnection` and `org.json`
-
-## Current Development Focus
-
-Phase 2 completion:
-- ✅ PatternAgent (30min detection)
-- ✅ PersonalityAgent (CharacterProfiles)
-- ✅ WarningCheckWorker (WorkManager)
-- ✅ TestAgent + MockLLMClient
-- 🚧 SoftInterventionOverlay (urgency ≥7 screen dimming UI)
