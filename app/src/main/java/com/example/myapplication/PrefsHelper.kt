@@ -3,6 +3,7 @@ package com.example.myapplication
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import java.util.Locale
 
 class PrefsHelper(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("screenshot_prefs", Context.MODE_PRIVATE)
@@ -31,7 +32,7 @@ class PrefsHelper(context: Context) {
     fun getOpenAIApiKey(): String? = prefs.getString("openai_api_key", null)
     fun setOpenAIApiKey(value: String) = prefs.edit { putString("openai_api_key", value) }
 
-    fun getOpenAIEndpoint(): String = prefs.getString("openai_endpoint", "https://api.openai.com/v1/responses") ?: "https://api.openai.com/v1/responses"
+    fun getOpenAIEndpoint(): String = prefs.getString("openai_endpoint", "https://api.mistral.ai/v1/chat/completions") ?: "https://api.mistral.ai/v1/chat/completions"
     fun setOpenAIEndpoint(value: String) = prefs.edit { putString("openai_endpoint", value) }
 
     // Custom OpenAI prompt for vision analysis (stored in prefs). If unset, EnvLoader or default will be used.
@@ -62,4 +63,52 @@ class PrefsHelper(context: Context) {
     // New preference: auto-advance dialogues when the typewriter finishes. Default true for backward compatibility.
     fun getAutoAdvanceDialogues(): Boolean = prefs.getBoolean("auto_advance_dialogues", true)
     fun setAutoAdvanceDialogues(value: Boolean) = prefs.edit { putBoolean("auto_advance_dialogues", value) }
+
+    // Response decision thresholds for Ralsei's chat behavior (range: -1.0 to 2.0)
+    fun getShortResponseThreshold(): Float = String.format(Locale.US, "%.2f", prefs.getFloat("short_response_threshold", 0.5f)).toFloat()
+    fun setShortResponseThreshold(value: Float) = prefs.edit { putFloat("short_response_threshold", String.format(Locale.US, "%.2f", value.coerceIn(-1.0f, 2.0f)).toFloat()) }
+
+    fun getLongResponseThreshold(): Float = String.format(Locale.US, "%.2f", prefs.getFloat("long_response_threshold", 0.7f)).toFloat()
+    fun setLongResponseThreshold(value: Float) = prefs.edit { putFloat("long_response_threshold", String.format(Locale.US, "%.2f", value.coerceIn(-1.0f, 2.0f)).toFloat()) }
+
+    // Character selection for warning system
+    fun getActiveCharacter(): String {
+        return prefs.getString("active_character", "ralsei") ?: "ralsei"
+    }
+
+    fun setActiveCharacter(characterId: String) {
+        prefs.edit { putString("active_character", characterId) }
+    }
+
+    // Warning urgency threshold: minimum urgency (0-10) to trigger warnings
+    fun getWarningUrgencyThreshold(): Int {
+        return prefs.getInt("warning_urgency_threshold", 4)
+    }
+
+    fun setWarningUrgencyThreshold(threshold: Int) {
+        prefs.edit { putInt("warning_urgency_threshold", threshold.coerceIn(0, 10)) }
+    }
+
+    // Warning system enabled/disabled toggle
+    fun isWarningSystemEnabled(): Boolean = prefs.getBoolean("warning_system_enabled", true)
+    fun setWarningSystemEnabled(enabled: Boolean) = prefs.edit { putBoolean("warning_system_enabled", enabled) }
+
+    // Floating control overlay visibility
+    fun isFloatingOverlayVisible(): Boolean = prefs.getBoolean("floating_overlay_visible", true)
+    fun setFloatingOverlayVisible(visible: Boolean) = prefs.edit { putBoolean("floating_overlay_visible", visible) }
+
+    // Floating control overlay position
+    fun getFloatingOverlayPositionX(): Int = prefs.getInt("floating_overlay_position_x", 0)
+    fun getFloatingOverlayPositionY(): Int = prefs.getInt("floating_overlay_position_y", 0)
+    fun setFloatingOverlayPosition(x: Int, y: Int) = prefs.edit {
+        putInt("floating_overlay_position_x", x)
+        putInt("floating_overlay_position_y", y)
+    }
+
+    // Flag to request screenshot permission from overlay
+    fun shouldRequestScreenshotPermission(): Boolean = prefs.getBoolean("request_screenshot_permission", false)
+    fun setRequestScreenshotPermission(request: Boolean) = prefs.edit { putBoolean("request_screenshot_permission", request) }
+
+    // Expose SharedPreferences for custom operations
+    fun getSharedPreferences(): SharedPreferences = prefs
 }

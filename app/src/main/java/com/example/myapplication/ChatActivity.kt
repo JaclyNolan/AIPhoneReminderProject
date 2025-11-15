@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.example.myapplication.ui.ChatScreen
 import com.example.myapplication.ui.theme.MyApplicationTheme
+import com.example.myapplication.agents.ChatManager
 
 class ChatActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

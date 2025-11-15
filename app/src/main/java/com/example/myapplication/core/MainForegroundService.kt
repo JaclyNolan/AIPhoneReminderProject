@@ -1,4 +1,4 @@
-package com.example.myapplication
+package com.example.myapplication.core
 
 import android.annotation.SuppressLint
 import android.app.Notification
@@ -16,6 +16,15 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
+import com.example.myapplication.agents.ChatManager
+import com.example.myapplication.context.ScreenshotAnalyzer
+import com.example.myapplication.memory.EnhancedMemoryManager
+import com.example.myapplication.PrefsHelper
+import com.example.myapplication.NotificationHelper
+import com.example.myapplication.OverlayDialogueController
+import com.example.myapplication.MyApplication
+import com.example.myapplication.ServiceActions
+import com.example.myapplication.ScreenshotPauseController
 
 class MainForegroundService : Service() {
     private val TAG = "MainForegroundService"
@@ -44,6 +53,10 @@ class MainForegroundService : Service() {
                     Log.d(TAG, "Received stop service request via broadcast")
                     stopSelf()
                 }
+                Intent.ACTION_SCREEN_OFF -> {
+                    Log.d(TAG, "Screen locked - stopping screenshot service")
+                    stopSelf()
+                }
             }
         }
     }
@@ -54,7 +67,9 @@ class MainForegroundService : Service() {
         prefsHelper = PrefsHelper(applicationContext)
         notificationHelper = NotificationHelper(applicationContext)
 
-        // Initialize ChatManager in the foreground service process so chat runs with screenshot lifecycle
+        // === Initialize Modular Architecture ===
+        
+        // Initialize Memory System (agents layer)
         try {
             ChatManager.initialize(applicationContext)
             Log.d(TAG, "ChatManager initialized in MainForegroundService process")
@@ -62,11 +77,37 @@ class MainForegroundService : Service() {
             Log.w(TAG, "Failed to initialize ChatManager", e)
         }
 
+        try {
+            EnhancedMemoryManager.initialize(applicationContext)
+            Log.d(TAG, "EnhancedMemoryManager initialized in MainForegroundService process")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to initialize EnhancedMemoryManager", e)
+        }
+
+        // Initialize Tools Layer
+        try {
+            com.example.myapplication.tools.DialogueTool.initialize(applicationContext)
+            Log.d(TAG, "DialogueTool initialized")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to initialize DialogueTool", e)
+        }
+
+        try {
+            com.example.myapplication.tools.NotificationTool.initialize(applicationContext)
+            Log.d(TAG, "NotificationTool initialized")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to initialize NotificationTool", e)
+        }
+
+        // Note: Context Providers are stateless objects, no initialization needed
+        Log.d(TAG, "Context Providers (AppUsage, Memory, PhoneState, UserPrefs) ready")
+
         // Register control broadcasts
         val filter = IntentFilter().apply {
             addAction(ServiceActions.ACTION_PAUSE_SCREENSHOT)
             addAction(ServiceActions.ACTION_RESUME_SCREENSHOT)
             addAction(ServiceActions.ACTION_STOP_SERVICE)
+            addAction(Intent.ACTION_SCREEN_OFF)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             // Use explicit receiver export flag to satisfy platform checks for dynamic receivers
@@ -93,6 +134,7 @@ class MainForegroundService : Service() {
         // Handle projection data if provided
         if (intent != null && intent.hasExtra(ServiceActions.EXTRA_RESULT_CODE) && intent.hasExtra(ServiceActions.EXTRA_DATA)) {
             val resultCode = intent.getIntExtra(ServiceActions.EXTRA_RESULT_CODE, -1)
+            @Suppress("DEPRECATION") // Intentional for backward compatibility with Android < 13
             val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) intent.getParcelableExtra(ServiceActions.EXTRA_DATA, Intent::class.java) else intent.getParcelableExtra<Intent>(ServiceActions.EXTRA_DATA)
             if (resultCode == android.app.Activity.RESULT_OK && data != null) {
                 try {

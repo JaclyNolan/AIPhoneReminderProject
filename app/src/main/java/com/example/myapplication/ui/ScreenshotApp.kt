@@ -41,10 +41,13 @@ fun ScreenshotApp(
     onOpenChat: () -> Unit = {},
     onOpenAdvanced: () -> Unit = {},
     onOpenResponseLog: () -> Unit = {},
+    onOpenDebug: () -> Unit = {},
     // New params to allow toggling the app theme from this screen
     currentDarkTheme: Boolean = true,
     onToggleTheme: () -> Unit = {},
-    autoAdvance: Boolean = true
+    autoAdvance: Boolean = true,
+    isWarningSystemEnabled: Boolean = true,
+    onWarningSystemChange: (Boolean) -> Unit = {}
 ) {
     Box(
         modifier = Modifier
@@ -81,8 +84,11 @@ fun ScreenshotApp(
                 onOpenChat = onOpenChat,
                 onOpenResponseLog = onOpenResponseLog,
                 onOpenAdvanced = onOpenAdvanced,
+                onOpenDebug = onOpenDebug,
                 currentDarkTheme = currentDarkTheme,
-                onToggleTheme = onToggleTheme
+                onToggleTheme = onToggleTheme,
+                isWarningSystemEnabled = isWarningSystemEnabled,
+                onWarningSystemChange = onWarningSystemChange
             )
         }
 
@@ -255,8 +261,11 @@ private fun NavigationSection(
     onOpenChat: () -> Unit,
     onOpenResponseLog: () -> Unit,
     onOpenAdvanced: () -> Unit,
+    onOpenDebug: () -> Unit,
     currentDarkTheme: Boolean,
-    onToggleTheme: () -> Unit
+    onToggleTheme: () -> Unit,
+    isWarningSystemEnabled: Boolean,
+    onWarningSystemChange: (Boolean) -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -271,7 +280,7 @@ private fun NavigationSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
                 text = "Navigation",
@@ -279,51 +288,84 @@ private fun NavigationSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            // AI Tools Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onOpenMemoryLogs,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Memory Log", fontSize = 12.sp, textAlign = TextAlign.Center)
-                }
-                OutlinedButton(
-                    onClick = onOpenChat,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Chat", fontSize = 12.sp, textAlign = TextAlign.Center)
-                }
-                OutlinedButton(
-                    onClick = onOpenResponseLog,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Response Log", fontSize = 12.sp, textAlign = TextAlign.Center)
-                }
-            }
+            // AI Tools Section
+            NavigationGroup(
+                title = "AI Tools",
+                buttons = listOf<Pair<String, () -> Unit>>(
+                    "Chat" to onOpenChat,
+                    "Memory Log" to onOpenMemoryLogs,
+                    "Response Log" to onOpenResponseLog
+                )
+            )
 
-            // Settings Row
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 4.dp),
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+            )
+
+            // Settings Section
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Settings",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+                
+                // Settings buttons
+                NavigationGroup(
+                    title = "",
+                    buttons = listOf<Pair<String, () -> Unit>>(
+                        "Advanced" to onOpenAdvanced,
+                        "Debug" to onOpenDebug,
+                        (if (currentDarkTheme) "Light Mode" else "Dark Mode") to onToggleTheme
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NavigationGroup(
+    title: String,
+    buttons: List<Pair<String, () -> Unit>>
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (title.isNotEmpty()) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+        }
+        
+        // Arrange buttons in rows of 2
+        buttons.chunked(2).forEach { buttonRow ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(
-                    onClick = onOpenAdvanced,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Advanced", fontSize = 12.sp, textAlign = TextAlign.Center)
+                buttonRow.forEach { (label, onClick) ->
+                    OutlinedButton(
+                        onClick = onClick,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = label,
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
-                OutlinedButton(
-                    onClick = onToggleTheme,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = if (currentDarkTheme) "Light Mode" else "Dark Mode",
-                        fontSize = 12.sp,
-                        textAlign = TextAlign.Center
-                    )
+                // Fill remaining space if odd number of buttons
+                if (buttonRow.size == 1) {
+                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
         }

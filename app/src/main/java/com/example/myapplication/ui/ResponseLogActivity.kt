@@ -7,6 +7,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,14 +40,54 @@ class ResponseLogActivity : ComponentActivity() {
 @Composable
 fun ResponseLogScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    var responses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
+    var chatResponses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
+    var analyzerResponses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
+    var upcpResponses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
+    var paResponses by remember { mutableStateOf<List<ResponseLogger.ResponseEntry>>(emptyList()) }
     var showClearDialog by remember { mutableStateOf(false) }
-    var showRequest by remember { mutableStateOf(true) }
-    var showResponse by remember { mutableStateOf(true) }
+    var selectedTab by remember { mutableStateOf(0) }
+
+    // Global show/hide states
+    var globalShowRequest by remember { mutableStateOf(false) }
+    var globalShowResponse by remember { mutableStateOf(true) }
 
     // Load responses on composition
     LaunchedEffect(Unit) {
-        responses = ResponseLogger.getAll(context)
+        chatResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.CHAT_MANAGER)
+        analyzerResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.ANALYZER_AGENT)
+        upcpResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.USAGE_PATTERN_CONTEXT_PROVIDER)
+        paResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.PERSONALITY_AGENT)
+    }
+
+    fun refresh() {
+        chatResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.CHAT_MANAGER)
+        analyzerResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.ANALYZER_AGENT)
+        upcpResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.USAGE_PATTERN_CONTEXT_PROVIDER)
+        paResponses = ResponseLogger.getByType(context, ResponseLogger.LogType.PERSONALITY_AGENT)
+    }
+
+    val currentResponses = when (selectedTab) {
+        0 -> chatResponses
+        1 -> analyzerResponses
+        2 -> upcpResponses
+        3 -> paResponses
+        else -> emptyList()
+    }
+    
+    val currentLogType = when (selectedTab) {
+        0 -> ResponseLogger.LogType.CHAT_MANAGER
+        1 -> ResponseLogger.LogType.ANALYZER_AGENT
+        2 -> ResponseLogger.LogType.USAGE_PATTERN_CONTEXT_PROVIDER
+        3 -> ResponseLogger.LogType.PERSONALITY_AGENT
+        else -> ResponseLogger.LogType.CHAT_MANAGER
+    }
+    
+    val currentTabName = when (selectedTab) {
+        0 -> "ChatManager"
+        1 -> "AnalyzerAgent"
+        2 -> "UPCP"
+        3 -> "PA"
+        else -> "Unknown"
     }
 
     Scaffold(
@@ -58,14 +102,12 @@ fun ResponseLogScreen(onBack: () -> Unit) {
                 actions = {
                     TextButton(
                         onClick = { showClearDialog = true },
-                        enabled = responses.isNotEmpty()
+                        enabled = currentResponses.isNotEmpty()
                     ) {
-                        Text("Clear All")
+                        Text("Clear $currentTabName")
                     }
                     TextButton(
-                        onClick = {
-                            responses = ResponseLogger.getAll(context)
-                        }
+                        onClick = { refresh() }
                     ) {
                         Text("Refresh")
                     }
@@ -78,7 +120,70 @@ fun ResponseLogScreen(onBack: () -> Unit) {
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Toggle controls
+            // Tab selector
+            TabRow(
+                selectedTabIndex = selectedTab,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Tab(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    text = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("ChatManager")
+                            Text(
+                                text = "${chatResponses.size} logs",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                )
+                Tab(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    text = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("AnalyzerAgent")
+                            Text(
+                                text = "${analyzerResponses.size} logs",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                )
+                Tab(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    text = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("UPCP")
+                            Text(
+                                text = "${upcpResponses.size} logs",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                )
+                Tab(
+                    selected = selectedTab == 3,
+                    onClick = { selectedTab = 3 },
+                    text = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("PA")
+                            Text(
+                                text = "${paResponses.size} logs",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                )
+            }
+
+            // Global toggle controls
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -99,12 +204,12 @@ fun ResponseLogScreen(onBack: () -> Unit) {
                         modifier = Modifier.weight(1f)
                     ) {
                         Checkbox(
-                            checked = showRequest,
-                            onCheckedChange = { showRequest = it }
+                            checked = globalShowRequest,
+                            onCheckedChange = { globalShowRequest = it }
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Show Request",
+                            text = "Show All Requests",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -113,12 +218,12 @@ fun ResponseLogScreen(onBack: () -> Unit) {
                         modifier = Modifier.weight(1f)
                     ) {
                         Checkbox(
-                            checked = showResponse,
-                            onCheckedChange = { showResponse = it }
+                            checked = globalShowResponse,
+                            onCheckedChange = { globalShowResponse = it }
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Show Response",
+                            text = "Show All Responses",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -126,13 +231,13 @@ fun ResponseLogScreen(onBack: () -> Unit) {
             }
 
             // Response list
-            if (responses.isEmpty()) {
+            if (currentResponses.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No responses logged yet",
+                        text = "No $currentTabName responses logged yet",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -148,11 +253,11 @@ fun ResponseLogScreen(onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(vertical = 16.dp)
                 ) {
-                    items(responses, key = { it.timestamp + it.response.hashCode() }) { entry ->
+                    items(currentResponses, key = { it.timestamp + it.response.hashCode() }) { entry ->
                         ResponseEntryCard(
                             entry = entry,
-                            showRequest = showRequest,
-                            showResponse = showResponse
+                            globalShowRequest = globalShowRequest,
+                            globalShowResponse = globalShowResponse
                         )
                     }
                 }
@@ -164,13 +269,13 @@ fun ResponseLogScreen(onBack: () -> Unit) {
     if (showClearDialog) {
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
-            title = { Text("Clear Response Log") },
-            text = { Text("Are you sure you want to clear all logged responses? This cannot be undone.") },
+            title = { Text("Clear $currentTabName Log") },
+            text = { Text("Are you sure you want to clear all $currentTabName logged responses? This cannot be undone.") },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        ResponseLogger.clear(context)
-                        responses = emptyList()
+                        ResponseLogger.clearByType(context, currentLogType)
+                        refresh()
                         showClearDialog = false
                     }
                 ) {
@@ -187,7 +292,19 @@ fun ResponseLogScreen(onBack: () -> Unit) {
 }
 
 @Composable
-fun ResponseEntryCard(entry: ResponseLogger.ResponseEntry, showRequest: Boolean, showResponse: Boolean) {
+fun ResponseEntryCard(
+    entry: ResponseLogger.ResponseEntry,
+    globalShowRequest: Boolean,
+    globalShowResponse: Boolean
+) {
+    var individualShowRequest by remember { mutableStateOf(false) }
+    var individualShowResponse by remember { mutableStateOf(true) }
+
+    // Effective visibility: global checkbox controls visibility
+    // When global is true, show all; when false, use individual state
+    val effectiveShowRequest = if (globalShowRequest) true else individualShowRequest
+    val effectiveShowResponse = if (globalShowResponse) true else individualShowResponse
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -200,53 +317,197 @@ fun ResponseEntryCard(entry: ResponseLogger.ResponseEntry, showRequest: Boolean,
                 .padding(16.dp)
         ) {
             // Timestamp
-            Text(
-                text = entry.timestamp,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold
-            )
+            SelectionContainer {
+                Text(
+                    text = entry.timestamp,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            // Token usage display (if any)
+            if (entry.promptTokens != null || entry.completionTokens != null || entry.totalTokens != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                SelectionContainer {
+                    Text(
+                        text = "Tokens: " + listOfNotNull(
+                            entry.promptTokens?.let { "prompt=$it" },
+                            entry.completionTokens?.let { "completion=$it" },
+                            entry.totalTokens?.let { "total=$it" }
+                        ).joinToString(", "),
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Request section
-            if (showRequest && entry.request.isNotBlank()) {
+            // Request section with individual toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
                     text = "REQUEST:",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.secondary,
                     fontWeight = FontWeight.Bold
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = entry.request,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
+                // Only show individual toggle when global is not forcing visibility
+                if (!globalShowRequest) {
+                    IconButton(
+                        onClick = { individualShowRequest = !individualShowRequest },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (effectiveShowRequest) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (effectiveShowRequest) "Hide Request" else "Show Request",
+                            tint = MaterialTheme.colorScheme.secondary
+                        )
+                    }
+                } else {
+                    // Show a disabled up arrow when global is forcing visibility
+                    IconButton(
+                        onClick = { },
+                        enabled = false,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowUp,
+                            contentDescription = "Shown by global setting",
+                            tint = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
+                        )
+                    }
+                }
             }
 
-            // Response section
-            if (showResponse) {
+            if (effectiveShowRequest && entry.request.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                SelectionContainer {
+                    Text(
+                        text = formatJson(entry.request),
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Response section with individual toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
                     text = "RESPONSE:",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.tertiary,
                     fontWeight = FontWeight.Bold
                 )
+                // Only show individual toggle when global is not forcing visibility
+                if (!globalShowResponse) {
+                    IconButton(
+                        onClick = { individualShowResponse = !individualShowResponse },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (effectiveShowResponse) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (effectiveShowResponse) "Hide Response" else "Show Response",
+                            tint = MaterialTheme.colorScheme.tertiary
+                        )
+                    }
+                } else {
+                    // Show a disabled up arrow when global is forcing visibility
+                    IconButton(
+                        onClick = { },
+                        enabled = false,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowUp,
+                            contentDescription = "Shown by global setting",
+                            tint = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f)
+                        )
+                    }
+                }
+            }
+
+            if (effectiveShowResponse) {
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = entry.response,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                SelectionContainer {
+                    Text(
+                        text = formatJson(entry.response),
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Format JSON string with proper indentation for better readability
+ * This implementation uses org.json.JSONTokener.nextValue() to unwrap
+ * quoted JSON string literals (e.g. "{\"key\":\"val\"}") so
+ * the displayed text won't contain backslash-escaped quotes.
+ */
+private fun formatJson(jsonString: String, depth: Int = 0): String {
+    if (depth > 5) return jsonString // prevent pathological recursion
+    val s = jsonString.trim()
+    return try {
+        val tok = org.json.JSONTokener(s)
+        val value = tok.nextValue()
+        when (value) {
+            is org.json.JSONObject -> value.toString(2)
+            is org.json.JSONArray -> value.toString(2)
+            is String -> {
+                // The content was a quoted string. It may itself contain JSON
+                // with escaped characters; recurse to attempt pretty-printing.
+                formatJson(value, depth + 1)
+            }
+            else -> s
+        }
+    } catch (_: Exception) {
+        // Fallback: try previous approach of JSONObject/JSONArray parsing directly
+        try {
+            val obj = org.json.JSONObject(s)
+            obj.toString(2)
+        } catch (_: Exception) {
+            try {
+                val arr = org.json.JSONArray(s)
+                arr.toString(2)
+            } catch (_: Exception) {
+                // If nothing parses, try to extract inner JSON snippet (best-effort)
+                val start = s.indexOfFirst { it == '{' || it == '[' }
+                val end = s.indexOfLast { it == '}' || it == ']' }
+                if (start >= 0 && end > start) {
+                    val inner = s.substring(start, end + 1)
+                    try {
+                        val tok2 = org.json.JSONTokener(inner)
+                        val v2 = tok2.nextValue()
+                        return when (v2) {
+                            is org.json.JSONObject -> v2.toString(2)
+                            is org.json.JSONArray -> v2.toString(2)
+                            is String -> v2
+                            else -> s
+                        }
+                    } catch (_: Exception) {
+                        return s
+                    }
+                }
+                s
             }
         }
     }

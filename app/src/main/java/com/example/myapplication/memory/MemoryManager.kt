@@ -1,5 +1,5 @@
 @file:Suppress("unused")
-package com.example.myapplication
+package com.example.myapplication.memory
 
 import android.content.Context
 import android.content.SharedPreferences

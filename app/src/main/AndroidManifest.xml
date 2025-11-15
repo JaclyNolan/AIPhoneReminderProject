@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" 
+        android:protectionLevel="signature|privileged|appop" 
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:name=".MyApplication"
@@ -41,8 +45,23 @@
             android:name=".ui.ResponseLogActivity"
             android:exported="false"
             android:theme="@style/Theme.MyApplication" />
+        <activity
+            android:name=".testing.DebugActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MyApplication" />
+        <activity
+            android:name=".PermissionsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MyApplication" />
+        <activity
+            android:name=".ScreenCapturePermissionActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleInstance" />
         <service
-            android:name=".MainForegroundService"
+            android:name=".core.MainForegroundService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection|dataSync" />
     </application>

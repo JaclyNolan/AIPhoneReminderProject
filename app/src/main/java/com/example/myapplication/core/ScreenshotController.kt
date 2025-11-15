@@ -1,9 +1,12 @@
-package com.example.myapplication
+package com.example.myapplication.core
 
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
+import com.example.myapplication.NotificationHelper
+import com.example.myapplication.PrefsHelper
+import com.example.myapplication.context.ScreenshotAnalyzer
 import android.hardware.display.DisplayManager
 import android.media.ImageReader
 import android.media.projection.MediaProjection
@@ -24,9 +27,13 @@ import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.roundToInt
 
-class ScreenshotManager(private val context: Context, private val notifier: NotificationHelper) {
+/**
+ * ScreenshotController manages the media projection, persistent virtual display and screenshots.
+ * It is NOT a Service; a long-lived Service (MainForegroundService) should own an instance of this controller.
+ */
+class ScreenshotController(private val context: Context, private val notifier: NotificationHelper) {
     companion object {
-        private const val TAG = "ScreenshotManager"
+        private const val TAG = "ScreenshotController"
     }
 
     private var mediaProjection: MediaProjection? = null
@@ -97,6 +104,9 @@ class ScreenshotManager(private val context: Context, private val notifier: Noti
             return
         }
 
+        // Log that we're about to take a screenshot
+        Log.i(TAG, "📸 Taking screenshot...")
+
         // Acquire the latest image from the existing ImageReader on the main thread
         mainHandler.postDelayed({
             val image = currentImageReader?.acquireLatestImage()
@@ -118,7 +128,7 @@ class ScreenshotManager(private val context: Context, private val notifier: Noti
                     saveBitmap(bitmap)
                     bitmap.recycle()
                     if (notify) notifier.showScreenshotNotification()
-                    Log.d(TAG, "Screenshot saved successfully (persistent display)")
+                    Log.i(TAG, "✅ Screenshot captured successfully (${persistentWidth}x${persistentHeight})")
                 } else {
                     Log.e(TAG, "Failed to acquire image from persistent ImageReader")
                 }
@@ -290,14 +300,14 @@ class ScreenshotManager(private val context: Context, private val notifier: Noti
                 Log.d(TAG, "Skipping saving screenshot to device (user preference)")
             }
 
-            // Enqueue bytes directly for OpenAI analysis if enabled (preferred over passing a URI)
+            // Enqueue bytes directly for analysis if enabled
             try {
                 if (prefs.isOpenAIAnalysisEnabled()) {
-                    // Use the enqueueImageBytes API to avoid later file reads and permission issues
-                    OpenAIAnalyzer.enqueueImageBytes(context, imageBytes)
+                    // Use AnalyzerAgent for structured batch processing with 3-frame windows
+                    ScreenshotAnalyzer.enqueueImageBytes(context, imageBytes)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to enqueue image bytes for OpenAI analysis", e)
+                Log.e(TAG, "Failed to enqueue image bytes for analysis", e)
             }
 
         } catch (e: Exception) {
