@@ -16,3 +16,4 @@ local.properties
 .idea/copilotDiffState.xml
 .env
 **/openai.env
+.cursor/mcp.json
