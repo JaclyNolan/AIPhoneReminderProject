@@ -21,7 +21,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication">
         <activity
-            android:name=".MainActivity"
+            android:name=".HomeActivity"
             android:exported="true"
             android:theme="@style/Theme.MyApplication">
             <intent-filter>
@@ -29,6 +29,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".DevActivity"
+            android:exported="true"
+            android:theme="@style/Theme.MyApplication" />
         <activity
             android:name=".MemoryLogActivity"
             android:exported="false"
@@ -46,6 +50,10 @@
             android:exported="false"
             android:theme="@style/Theme.MyApplication" />
         <activity
+            android:name=".ui.DialogueQueueActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MyApplication" />
+        <activity
             android:name=".testing.DebugActivity"
             android:exported="false"
             android:theme="@style/Theme.MyApplication" />
@@ -60,6 +68,10 @@
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:launchMode="singleInstance" />
+        <activity
+            android:name=".onboarding.OnboardingActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MyApplication" />
         <service
             android:name=".core.MainForegroundService"
             android:exported="false"

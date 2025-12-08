@@ -5,7 +5,7 @@ An Android AI companion that monitors device activity through automated screensh
 ## Project Status
 
 **Phase 1 (Commentary Bot)**: ✅ Complete and functional  
-**Phase 2 (Warning System)**: 🚧 In active development
+**Phase 2 (Warning System)**: 🚧 In active development  
 
 ## Features
 
@@ -15,6 +15,8 @@ An Android AI companion that monitors device activity through automated screensh
 - **Multi-Tier Memory System**: Four-layer memory architecture (SceneTimeline, CondensedMemories, RecentIntents, DialogueSummaries)
 - **Interactive Chat**: Direct chat interface with Ralsei using conversational AI with full memory context
 - **System Overlay Dialogue**: Character dialogue bubbles with emotion-based portraits over other apps
+- **Floating Control Widget**: Draggable floating overlay with quick access to screenshot toggle, warning system toggle, and app launcher
+- **Real-Time App Monitoring**: AppUsageMonitor detects app foreground events and triggers warning checks with configurable cooldown
 - **Decision Scoring System**: Intelligent response generation based on activity weight, emotional resonance, and anti-repetition penalties
 - **Pattern Detection**: Rule-based detection of extended app usage sessions (30+ minutes)
 - **Character-Driven Responses**: LLM-generated interventions using CharacterProfiles personality system
@@ -24,6 +26,9 @@ An Android AI companion that monitors device activity through automated screensh
 - Response thresholds (range: -1.0 to 2.0)
 - Custom AI prompts for analyzer and chat
 - Mock mode for offline testing with deterministic responses
+- Floating overlay visibility and position persistence
+- Warning system settings: periodic check interval, app open check cooldown, urgency threshold
+- App ignore list: exclude specific apps from triggering warning checks
 
 ## Architecture
 
@@ -35,6 +40,10 @@ The app follows a **strict context provider → processor → agent → tools** 
 
 ```mermaid
 graph TB
+    subgraph Triggers1["TRIGGER EVENTS"]
+        TR1[Screenshot Capture<br/>Configurable interval<br/>Default: 6 seconds<br/>Persistent VirtualDisplay]
+    end
+    
     subgraph ContextProviders1["CONTEXT PROVIDERS"]
         CP2[ChatHistoryContextProvider]
         CP4[PhoneStateContextProvider]
@@ -53,7 +62,7 @@ graph TB
         T1[DialogueTool<br/>Overlay]
     end
     
-    Screenshots[Screenshots] --> P1
+    TR1 --> P1
     
     P1 --> A1
     
@@ -63,16 +72,22 @@ graph TB
     
     A1 --> T1
     
+    style Triggers1 fill:#ffcccc
     style ContextProviders1 fill:#e1f5ff
     style ContextProcessors1 fill:#d4edda
     style Agents1 fill:#fff4e1
     style Tools1 fill:#ffe1f5
 ```
 
-#### Phase 2: Warning System Pipeline (Periodic, 5min)
+#### Phase 2: Warning System Pipeline (Periodic 5min + Real-time App Opens)
 
 ```mermaid
 graph TB
+    subgraph Triggers2["TRIGGER EVENTS"]
+        TR2A[WarningCheckWorker<br/>Periodic check<br/>Configurable interval<br/>Default: 5 minutes]
+        TR2B[AppUsageMonitor<br/>Real-time app opens<br/>Triggers on app foreground<br/>Cooldown: 30 seconds per app]
+    end
+    
     subgraph ContextProviders2["CONTEXT PROVIDERS"]
         CP1[AppUsageContextProvider]
         CP3[UserBadBehaviorContextProvider]
@@ -90,11 +105,11 @@ graph TB
     end
     
     subgraph Tools2["INTERVENTION"]
-        T1[DialogueTool<br/>Overlay]
-        T2[SoftInterventionTool<br/>Dim screen]
+        T1[OverlayDialogueController<br/>Dialogue + Soft Intervention]
     end
     
-    Check[WarningCheckWorker<br/>5min periodic] --> P2
+    TR2A --> P2
+    TR2B --> P2
     
     CP1 --> P2
     CP3 --> P2
@@ -107,8 +122,8 @@ graph TB
     CP5 --> A2
     
     A2 --> T1
-    A2 --> T2
     
+    style Triggers2 fill:#ffcccc
     style ContextProviders2 fill:#e1f5ff
     style ContextProcessors2 fill:#d4edda
     style Agents2 fill:#fff4e1
@@ -122,10 +137,10 @@ Single-responsibility components that gather and expose raw data:
 | Provider | Responsibility | Feeds Into | Returns |
 |----------|---|---|---|
 | **`AppUsageContextProvider`** | General app usage timeline (broader 1-2 hour view) | UsagePatternAgent | List of app usage entries (app, duration, timestamp) |
-| **`ChatHistoryContextProvider`** | Intelligent extraction of conversation history | ChatManager, PersonalityAgent | Optimized token-efficient chat history (20 most recent user/assistant messages + 3 recent analyzer summaries) |
+| **`ChatHistoryContextProvider`** | Intelligent extraction of conversation history | ChatManager, PersonalityAgent | Two formats: full history (20 most recent user/assistant messages + 3 recent analyzer summaries) and condensed format (user-assistant pairs with thinking/text fields extracted from structured responses). Includes PersonalityAgent outputs (warnings and commentary) for context awareness. |
 | **`UserBadBehaviorContextProvider`** | User-defined problematic behaviors | UsagePatternAgent | List of bad behaviors (descriptions, app associations, severity) |
 | **`PhoneStateContextProvider`** | Device state (battery, network, time) | ChatManager, PersonalityAgent | Battery level, network status, time of day, device state |
-| **`MemoryContextProvider`** | Memories & SceneTimeline access | ChatManager, PersonalityAgent | CondensedMemories, RecentIntents, DialogueSummaries, SceneTimeline |
+| **`MemoryContextProvider`** | Memories & SceneTimeline access | ChatManager, PersonalityAgent | CondensedMemories, RecentIntents, DialogueSummaries, SceneTimeline with natural language timestamps (e.g., "At 10:30 AM, user is watching YouTube") |
 
 #### Layer 2: Context Processors (Data Analysis)
 
@@ -171,10 +186,13 @@ LLM-based agents that use processed context to make decisions:
 - **Input sources**:
   1. From **ScreenshotAnalyzer**: Developer payload (for Commentary Bot pipeline)
   2. From **UsagePatternAgent**: Natural language scenario describing usage patterns and concerns
+  3. From **ChatHistoryContextProvider**: Condensed chat history with thinking fields (user-assistant conversation pairs)
+  4. From **MemoryContextProvider**: Formatted memory context with natural language timestamps
+- **Prompt Structure**: Uses ChatManager-style prompt with [STYLE], [TRAITS], [REQUEST FORMAT], [MULTI-TASK PROCESSING], and [EMOTION RULE] sections
 - **Decision Logic**: 
   - For Phase 1 (Commentary): Uses ScreenshotAnalyzer context + DecisionScore to decide on response
   - For Phase 2 (Warning): Uses UsagePatternAgent context to determine urgency and generate concerned response
-- **Output**: Character-driven dialogue with emotion, urgency assessment, intervention decision
+- **Output**: Character-driven dialogue with emotion, urgency assessment, intervention decision (structured JSON with thinking/text/emotion fields)
 - **Responsibility**: 
   - Interprets context (is this a problem?)
   - Decides urgency (0-10)
@@ -185,8 +203,7 @@ LLM-based agents that use processed context to make decisions:
 
 Execute actions based on agent decisions:
 
-- **`DialogueTool`**: Display dialogue overlay (receives input from both ChatManager and UsagePatternAgent)
-- **`SoftInterventionTool`**: Screen dimming for high urgency (triggered by UsagePatternAgent when urgency ≥ 7)
+- **`OverlayDialogueController`**: Displays dialogue overlay and handles soft intervention mode (blur background + action buttons). Receives input from both ChatManager and UsagePatternAgent. Soft intervention mode is triggered when urgency meets threshold (configurable in Advanced settings, default: 4) via `setInterveneMode(true)`.
 
 ### Data Flow: Two Independent Pipelines
 
@@ -206,7 +223,11 @@ ChatManager (Decision Score calculation)
 
 #### Phase 2 (Warning System - Pattern Detection Pipeline)
 ```
-Periodic Check (5min via WorkManager)
+Two Trigger Mechanisms:
+  1. Periodic Check (5min via WorkManager)
+  2. Real-time App Opens (AppUsageMonitor via UsageStatsManager)
+  ↓
+WarningCheckWorker.triggerCheck() (with cooldown enforcement)
   ↓
 UsagePatternAgent (Context Processor - Objective Analysis)
   ← Receives 4 context sources:
@@ -228,8 +249,8 @@ PersonalityAgent (Decision Layer - Makes Judgment)
   ↓
   IF intervention needed:
     → PersonalityAgent generates response (emotion, dialogue)
-    → DialogueTool displays response
-    → SoftInterventionTool dims screen if urgency ≥ 7
+    → OverlayDialogueController displays response
+    → If urgency ≥ threshold (configurable): OverlayDialogueController.setInterveneMode(true) enables blur overlay + action buttons
 ```
 
 **Key Difference**: 
@@ -284,7 +305,8 @@ adb shell pm clear com.example.myapplication
 The app requires several sensitive permissions:
 
 - **Media Projection**: For capturing screenshots (runtime consent dialog)
-- **System Alert Window**: For displaying overlay dialogue bubbles
+- **System Alert Window**: For displaying overlay dialogue bubbles and floating control widget
+- **Usage Stats**: For real-time app open detection (optional, required for AppUsageMonitor)
 - **Foreground Service**: For continuous background operation
 - **Notifications**: For service status notifications (Android 13+)
 
@@ -309,6 +331,18 @@ The app requires several sensitive permissions:
   - 2-3 repeats: -0.12 penalty
   - 4+ repeats: -0.22 penalty
 
+### Warning System Settings
+- **Warning System Enabled**: Toggle periodic and real-time pattern detection (default: enabled)
+- **Periodic Check Interval**: Time between WorkManager checks (1-60 minutes, default: 5 minutes)
+- **App Open Check Enabled**: Toggle real-time app foreground detection (default: enabled)
+- **Warning Check Cooldown**: Minimum time between triggered checks per app (5-300 seconds, default: 30 seconds)
+- **Warning Urgency Threshold**: Minimum urgency (0-10) to trigger soft intervention (blur overlay with action buttons). Urgency below threshold shows dialogue only. Lower values = more sensitive (default: 4)
+- **Ignored Apps**: List of package names excluded from warning checks
+
+### Floating Overlay Settings
+- **Floating Overlay Visible**: Toggle floating control widget visibility (default: visible)
+- **Floating Overlay Position**: Persistent position saved when widget is moved or dismissed
+
 ### Testing Settings
 - **Mock Mode**: Enable deterministic LLM responses for offline testing
 - **Developer Debug**: Show internal AI processing messages in chat UI
@@ -316,10 +350,11 @@ The app requires several sensitive permissions:
 ## Usage
 
 ### Initial Setup
-1. Launch the app and grant required permissions (MediaProjection, System Alert Window)
+1. Launch the app and grant required permissions (MediaProjection, System Alert Window, Usage Stats if using app open detection)
 2. Configure your OpenAI API key in Advanced settings
 3. Adjust screenshot interval and image quality as needed
-4. Start the screenshot service from MainActivity
+4. Start the screenshot service from MainActivity or the floating control widget
+5. The floating control widget appears automatically when the app opens
 
 ### Interacting with Ralsei
 
@@ -330,21 +365,36 @@ The app requires several sensitive permissions:
 - Safety detection for concerning content
 
 **Pattern Detection (Phase 2)**:
-- Periodic checks every 5 minutes via WorkManager
+- Periodic checks every 5 minutes via WorkManager (configurable interval)
+- Real-time app open detection via AppUsageMonitor (triggers warning checks when apps come to foreground)
+- Cooldown system prevents spam (default 30 seconds per app)
 - Detects extended app usage sessions (30+ minutes)
 - Urgency scale 0-10 determines intervention type
-- High urgency (≥7) triggers soft intervention (screen dimming)
+- Urgency at or above threshold (configurable in Advanced, default: 4) triggers soft intervention (blur overlay with action buttons)
+- Urgency below threshold (if shouldIntervene=true) shows dialogue bubble only
+- No intervention shown if PersonalityAgent returns empty/null response
+- App ignore list allows excluding specific apps from triggering checks
+
+**Floating Control Widget**:
+- Draggable floating overlay with quick access controls
+- Toggle screenshot service on/off
+- Toggle warning system on/off
+- Quick launcher to open main app
+- Snaps to screen edges when released
+- Dismiss by dragging to bottom remove zone
+- Position and visibility persist across app sessions
 
 **Direct Chat**:
 - Use the Chat tab to have conversations with full memory context
 - Ralsei can reference recent screen activity from SceneTimeline
 - Access to condensed memories and recent intents
 - Chat history persisted across app sessions
+- Condensed chat history format extracts thinking fields from structured responses for better context awareness
 
 **Memory Review**:
 - Check the Memory Log to see what Ralsei remembers
-- SceneTimeline: Chronological activity observations
-- CondensedMemories: Important facts and emotional moments
+- SceneTimeline: Chronological activity observations with natural language timestamps (e.g., "At 10:30 AM, user is watching YouTube")
+- CondensedMemories: Important facts and emotional moments formatted with natural language timestamps
 
 **Response Logs**:
 - View all OpenAI API requests/responses with token usage tracking
@@ -363,56 +413,138 @@ This prevents recursive self-observation and maintains privacy during app config
 
 ```
 app/src/main/java/com/example/myapplication/
-├── context/                     # Context providers & processors
-│   ├── AppUsageContextProvider.kt    # Raw app usage data
-│   ├── ChatHistoryContextProvider.kt # NEW: Chat history extraction
-│   ├── UserBadBehaviorContextProvider.kt # NEW: User-defined behaviors
-│   ├── PhoneStateContextProvider.kt  # Device state data
-│   ├── UserPrefsContextProvider.kt   # User preferences
-│   ├── ScreenshotAnalyzer.kt         # Vision API batch processor
-│   └── UsagePatternAgent.kt          # NEW: LLM-based context processor
+├── actions/                     # Action types for screen coordination
+│   └── ScreenAction.kt          # Action classes (ShowDialogue, ShowSoftIntervention, ClearScreen)
 ├── agents/                      # Decision-making components
 │   ├── ChatManager.kt           # Conversational AI + DecisionScore
 │   └── PersonalityAgent.kt      # Character-aware decision maker + LLM responses
-├── tools/                       # Intervention tool components
-│   ├── DialogueTool.kt          # Overlay dialogue display
-│   ├── SoftInterventionTool.kt  # Screen dimming intervention
-│   └── NotificationTool.kt      # System notifications
+├── context/                     # Context providers & processors
+│   ├── AppUsageContextProvider.kt         # Raw app usage data
+│   ├── ChatHistoryContextProvider.kt      # Chat history extraction & context
+│   ├── MemoryContextProvider.kt           # Memory context formatting
+│   ├── PhoneStateContextProvider.kt       # Device state (battery, network, time)
+│   ├── ScreenshotAnalyzer.kt              # Vision API batch processor
+│   ├── UserBadBehaviorContextProvider.kt  # User-defined problematic behaviors
+│   ├── UserPrefsContextProvider.kt        # User preferences & settings
+│   ├── UsagePatternContextProvider.kt     # Usage pattern analysis (stateless utility)
+│   └── UsagePatternDetector.kt            # Pattern violation detection
+├── coordinator/                 # Coordination layer
+│   └── ToolCoordinator.kt       # Action queue & tool coordination
+├── core/                        # Core service components
+│   ├── AppUsageMonitor.kt       # Real-time app open detection
+│   ├── MainForegroundService.kt # Core background service
+│   ├── ScreenshotController.kt  # MediaProjection + VirtualDisplay
+│   └── WarningCheckWorker.kt    # WorkManager periodic pattern checks
+├── di/                          # Dependency injection modules
+│   ├── AppModule.kt             # General app dependencies
+│   ├── AppServices.kt           # ⚠️ Service locator (deprecated, being phased out)
+│   ├── ContextProvidersModule.kt # Context provider provisioning
+│   ├── EnhancedMemoryManagerEntryPoint.kt # Memory manager module
+│   ├── HiltUsageExamples.kt     # DI pattern examples
+│   ├── LLMModule.kt             # LLM client provisioning
+│   ├── MemoryModule.kt          # Memory system dependencies
+│   └── WorkerModule.kt          # WorkManager & background worker setup
 ├── memory/                      # Memory management components
 │   ├── EnhancedMemoryManager.kt # Four-tier memory architecture
-│   └── MemoryManager.kt         # Legacy memory (MemoryEntry)
+│   └── MemoryManager.kt         # Legacy memory system (MemoryEntry)
+├── onboarding/                  # Onboarding flow UI
+│   ├── OnboardingActivity.kt    # Onboarding container
+│   ├── OnboardingScreen.kt      # Screen orchestrator
+│   ├── OnboardingTopContent.kt  # Top section layout
+│   ├── OnboardingViewModel.kt   # Onboarding state management
+│   ├── SkipButton.kt            # Skip button component
+│   └── screens/                 # Individual screen components
+│       ├── Screen1Empty.kt      # Welcome screen
+│       ├── Screen2BadHabitInput.kt # Habit input
+│       ├── Screen3FlowDiagram.kt # Architecture visualization
+│       ├── Screen4InterventionPreview.kt # Intervention demo
+│       ├── Screen5PermissionCards.kt # Permission requests
+│       └── Screen6Summary.kt    # Final summary
+├── pipeline/                    # Pipeline managers
+│   ├── CommentaryPipelineManager.kt # Screenshot → Analysis → Response pipeline
+│   └── UsagePatternContext.kt   # Pattern context data model
 ├── testing/                     # Test infrastructure
-│   ├── TestAgent.kt             # Test scenario orchestration
+│   ├── ContextProviderFactory.kt # Mock provider factory
+│   ├── DebugActivity.kt         # Debug UI for testing
+│   ├── DebugScreen.kt           # Debug screen components
+│   ├── ILLMClient.kt            # Interface for test/real LLM clients
+│   ├── MockAppUsageStats.kt     # Mock usage stats data
 │   ├── MockLLMClient.kt         # Deterministic test responses
-│   ├── LLMClientFactory.kt      # Mock/Real client factory
-│   └── WarningSystemTestHelper.kt
+│   ├── RealAppUsageReader.kt    # Real usage stats reader
+│   ├── TestAgent.kt             # Test scenario orchestration
+│   ├── TestScenario.kt          # Test scenario definitions
+│   ├── UnifiedTestPipeline.kt   # Unified testing pipeline
+│   ├── WarningSystemTestHelper.kt # Warning system test utilities
+│   └── mockcontext/             # Mock implementations of context providers
+│       ├── MockAppUsageContextProvider.kt
+│       ├── MockChatHistoryContextProvider.kt
+│       ├── MockMemoryContextProvider.kt
+│       ├── MockPhoneStateContextProvider.kt
+│       ├── MockUserBadBehaviorContextProvider.kt
+│       └── MockUserPrefsContextProvider.kt
+├── tools/                       # Intervention tool components
+│   ├── DialogueTool.kt          # Dialogue display tool
+│   └── NotificationTool.kt      # System notification tool
 ├── ui/                          # Compose UI components
-│   ├── ScreenshotApp.kt         # Main UI orchestrator
+│   ├── AddHabitDialog.kt        # Habit input dialog
+│   ├── Advanced.kt              # Advanced settings screen
+│   ├── BadHabitsListing.kt      # Bad habits display
 │   ├── ChatScreen.kt            # Chat interface
-│   ├── MemoryLog.kt             # Memory display
-│   ├── DialogueUI.kt            # Overlay dialogue with typewriter
-│   ├── DialogueQueue.kt         # Reactive dialogue state (StateFlow)
+│   ├── DialogueQueue.kt         # Reactive dialogue queue (StateFlow)
+│   ├── DialogueQueueActivity.kt # Dialogue queue viewer activity
+│   ├── DialogueQueueManager.kt  # Dialogue queue state management
 │   ├── DialogueTypes.kt         # DialogueEntry + emotionToRelativePath()
-│   ├── Advanced.kt              # Settings screens
+│   ├── DialogueUI.kt            # Overlay dialogue with typewriter effect
+│   ├── HabitCard.kt             # Habit card component
+│   ├── MemoryLog.kt             # Memory timeline display
+│   ├── RalseiStatusCard.kt      # Ralsei status indicator
+│   ├── RalseiStatusMessageGenerator.kt # Status message generation
+│   ├── ResponseLogActivity.kt   # API request/response viewer
+│   ├── ScreenshotApp.kt         # Main UI orchestrator
 │   └── theme/                   # Material Design 3 theme
-├── MyApplication.kt             # Application class + activity tracking
-├── MainActivity.kt              # Main settings and control interface
-├── ChatActivity.kt              # Direct chat interface
-├── MemoryLogActivity.kt         # Memory viewer
-├── AdvancedActivity.kt          # Advanced configuration
-├── DebugActivity.kt             # Debug tools
-├── MainForegroundService.kt     # Core background service
-├── ScreenshotController.kt      # MediaProjection + VirtualDisplay
-├── OverlayDialogueController.kt # System overlay manager
-├── PrefsHelper.kt               # Centralized SharedPreferences
-├── LLMClient.kt                 # Shared Mistral/OpenAI API client
+│       ├── Color.kt             # Color definitions
+│       ├── Theme.kt             # Theme setup
+│       └── Type.kt              # Typography definitions
+├── AdvancedActivity.kt          # Advanced settings activity
+├── ChatActivity.kt              # Direct chat interface activity
 ├── CharacterProfiles.kt         # Ralsei personality definitions
-├── EnvLoader.kt                 # Environment configuration
-├── ResponseLogger.kt            # API request/response logging
+├── DevActivity.kt               # Developer tools activity
+├── EnvLoader.kt                 # Environment configuration loader
+├── FloatingControlOverlay.kt    # Floating control widget overlay
+├── HomeActivity.kt              # Main home screen activity
+├── LLMClient.kt                 # Shared Mistral/OpenAI API client
+├── MemoryLogActivity.kt         # Memory viewer activity
+├── MyApplication.kt             # Application class + activity lifecycle tracking
 ├── NotificationHelper.kt        # Foreground service notifications
+├── OverlayDialogueController.kt # System overlay manager
+├── PermissionsActivity.kt       # Permissions onboarding activity
+├── PermissionsScreen.kt         # Permissions screen component
+├── PrefsHelper.kt               # Centralized SharedPreferences wrapper
+├── ResponseLogger.kt            # API request/response logging
+├── ScreenCapturePermissionActivity.kt # Screenshot permission handler
+├── ScreenshotPauseController.kt # Screenshot pause/resume control
 ├── ServiceActions.kt            # Broadcast action constants
-└── WarningCheckWorker.kt        # WorkManager periodic checks
+├── TemplateManager.kt           # Template management utility
+└── WarningSystemTestHelper.kt   # Warning system testing utilities
 ```
+
+### Hilt Dependency Injection Migration ⚠️ CRITICAL
+
+The project is migrating from manual dependency instantiation and service locators to proper Hilt DI to eliminate initialization errors like:
+```
+java.lang.IllegalStateException: PersonalityAgent has not been initialized by Hilt yet.
+```
+
+**Key Changes**:
+1. Converting `object` singletons to `@Singleton` classes with `@Inject constructor`
+2. Removing secondary constructors (e.g., `PrefsHelper(context)`) - always inject instead
+3. Removing static `initialize()` methods - Hilt manages initialization automatically
+4. Removing service locator pattern (`AppServices`) - use direct injection
+5. Adding `@AndroidEntryPoint` to Services and `@HiltViewModel` to ViewModels
+6. Migrating `WarningCheckWorker` to `@HiltWorker` with `@AssistedInject`
+
+**For Developers**: Do NOT use `AppServices`, `PrefsHelper(context)`, or static `initialize()` methods in new code. Always use `@Inject` constructor.
+---
 
 ### Critical Development Patterns
 
@@ -435,13 +567,14 @@ fun takeScreenshot() {
 ```
 **Why**: Recreation takes ~2s and prompts MediaProjection permission dialog.
 
-#### 3. Singleton Initialization ⚠️
-```kotlin
-// MUST run in MainForegroundService.onCreate() BEFORE screenshot loop
-ChatManager.initialize(applicationContext)
-EnhancedMemoryManager.initialize(applicationContext)
+#### 3. Use Hilt injection:
+@AndroidEntryPoint
+class MainForegroundService : Service() {
+    @Inject lateinit var chatManager: ChatManager
+    @Inject lateinit var enhancedMemoryManager: EnhancedMemoryManager
+    // Hilt automatically initializes these
+}
 ```
-**Why**: Services outlive Activities. Initialize once at service startup, not per-Activity.
 
 #### 4. Thread Safety Patterns
 ```kotlin
@@ -524,14 +657,20 @@ After editing Kotlin/Java source files, manifest, or Gradle files:
 
 ## Current Development Focus
 
-Phase 2 completion:
+### Phase 2 Completion
 - ✅ UsagePatternDetector (30min detection, formerly PatternAgent)
 - ✅ ScreenshotAnalyzer (Vision API processing, formerly AnalyzerAgent)
-- ✅ PersonalityAgent (CharacterProfiles)
-- ✅ WarningCheckWorker (WorkManager)
+- ✅ PersonalityAgent (CharacterProfiles with ChatManager-style prompt structure)
+- ✅ WarningCheckWorker (WorkManager periodic checks)
+- ✅ AppUsageMonitor (real-time app open detection with cooldown)
+- ✅ FloatingControlOverlay (draggable control widget)
 - ✅ TestAgent + MockLLMClient
 - ✅ Modular architecture refactor (context providers, processors, agents, tools)
-- 🚧 SoftInterventionOverlay (urgency ≥7 screen dimming UI)
+- ✅ Condensed chat history format (extracts thinking/text fields from structured responses)
+- ✅ Natural language timestamps in memory context (e.g., "At 10:30 AM, user is watching YouTube")
+- ✅ App ignore list management
+- ✅ Warning system configuration (cooldown, intervals, urgency threshold)
+- ✅ SoftInterventionOverlay (implemented in OverlayDialogueController via setInterveneMode(), blur overlay with action buttons, triggered by urgency threshold)
 - 🚧 App/screen context awareness (prevent misinterpretation of internal screens)
 - 🚧 Pattern analysis payload (session duration, activity streaks, concern flags)
 
@@ -546,6 +685,6 @@ See `.github/copilot-instructions.md` and `.cursor/rules/general-rules.mdc` for 
 ## Acknowledgments
 
 - Ralsei character from **Deltarune** by Toby Fox
-- OpenAI Vision API for screenshot analysis
+- Mistral API for screenshot analysis
 - Android MediaProjection API for screen capture
 - Inspired by Model-Context-Protocol (MCP) architecture pattern

@@ -10,7 +10,7 @@ Android AI companion that monitors device activity through automated screenshots
 **ALWAYS build the project after making code changes to verify compilation success.**
 
 After editing Kotlin/Java source files, manifest, or Gradle files:
-1. Run: `$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"; .\gradlew assembleDebug`
+1. Run: `$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"; .\gradlew assembleDebug` (Run this command plainly for most of the time, keep it simple don't try to use Select-String or similar command)
 2. Check for compilation errors in the output
 3. Fix any errors before presenting results to the user
 4. Only report success after BUILD SUCCESSFUL confirmation
@@ -83,3 +83,35 @@ TestAgent.runAllScenarios(context)  // Full test suite
 - `MainActivity`, `ChatActivity`, `AdvancedActivity`, `MemoryLogActivity`, `ResponseLogActivity`, `DebugActivity`
 
 Implementation: `MainForegroundService` checks `MyApplication.isExcludedActivity()` before each screenshot.
+
+## ⚠️ Over-Engineering Trap Detection
+
+**Before proposing architecture refactors, optimization, or abstraction layers, ALWAYS ask:**
+
+1. **What's the MEASURED problem?** (Not hypothetical)
+   - Do you have data? (bugs, slow feature velocity, hard to test)
+   - Or are you guessing based on code smell?
+   - ❌ "Just in case Android kills the process" → No data
+   - ✅ "App crashes 3x/week when backgrounded" → Real problem
+
+2. **Can you fix it without refactoring?**
+   - Target fix first (fix the bug, not the architecture)
+   - Refactor only if the problem spans multiple components
+   - One-off fixes > full redesigns
+
+3. **What's the time cost vs shipping benefit?**
+   - How many features does this block?
+   - How long will refactoring take?
+   - If refactoring > blocked features, don't do it yet
+
+**Red flags that signal over-engineering:**
+- "This will prevent future problems" (unmeasured)
+- "This will reduce tech debt" (without showing impact on velocity)
+- Pre-abstracting before you see the pattern repeating
+- "Just in case" optimizations with no data
+
+**When architecture redesign IS justified:**
+- You've hit the same bug 3+ times
+- Feature velocity measurably slowed
+- You've measured the cost AND it's blocking work
+- Solution is targeted, not speculative

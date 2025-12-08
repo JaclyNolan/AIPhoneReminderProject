@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+For koltin when using appendLine() function, correct way to include a variable into a string is "$variable" NOT "${variable}"
